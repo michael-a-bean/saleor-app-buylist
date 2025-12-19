@@ -1,0 +1,664 @@
+import { TRPCError } from "@trpc/server";
+import { Decimal } from "decimal.js";
+import { z } from "zod";
+
+import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
+import { router } from "@/modules/trpc/trpc-server";
+
+// Condition multiplier schema
+const conditionMultipliersSchema = z.object({
+  NM: z.number().min(0).max(2).optional().default(1.0),
+  LP: z.number().min(0).max(2).optional().default(0.9),
+  MP: z.number().min(0).max(2).optional().default(0.75),
+  HP: z.number().min(0).max(2).optional().default(0.5),
+  DMG: z.number().min(0).max(2).optional().default(0.25),
+});
+
+// Tiered rule schema
+const tieredRuleSchema = z.object({
+  minValue: z.number().min(0),
+  maxValue: z.number().min(0).nullable(), // null = no upper limit
+  percentage: z.number().min(0).max(100),
+});
+
+// Pricing policy create schema
+const pricingPolicyCreateSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  description: z.string().max(500).optional().nullable(),
+  isDefault: z.boolean().optional().default(false),
+  isActive: z.boolean().optional().default(true),
+  policyType: z.enum(["PERCENTAGE", "FIXED_DISCOUNT", "TIERED", "CUSTOM"]),
+  basePercentage: z.number().min(0).max(100).optional().nullable(),
+  conditionMultipliers: conditionMultipliersSchema.optional().nullable(),
+  tieredRules: z.array(tieredRuleSchema).optional().nullable(),
+  minimumPrice: z.number().min(0).optional().nullable(),
+  maximumPrice: z.number().min(0).optional().nullable(),
+  categoryOverrides: z.record(z.string(), z.number()).optional().nullable(),
+});
+
+const pricingPolicyUpdateSchema = pricingPolicyCreateSchema.partial();
+
+const searchSchema = z.object({
+  query: z.string().optional(),
+  isActive: z.boolean().optional(),
+  limit: z.number().min(1).max(100).optional().default(50),
+  offset: z.number().min(0).optional().default(0),
+});
+
+/**
+ * Default condition multipliers for TCG-style grading
+ */
+export const DEFAULT_CONDITION_MULTIPLIERS = {
+  NM: 1.0,    // Near Mint: 100% of base offer
+  LP: 0.9,    // Lightly Played: 90%
+  MP: 0.75,   // Moderately Played: 75%
+  HP: 0.5,    // Heavily Played: 50%
+  DMG: 0.25,  // Damaged: 25%
+};
+
+/**
+ * Pricing Policies Router - Manage buylist pricing rules
+ */
+export const pricingRouter = router({
+  /**
+   * List all pricing policies with optional filtering
+   */
+  list: protectedClientProcedure.input(searchSchema.optional()).query(async ({ ctx, input }) => {
+    const where = {
+      installationId: ctx.installationId,
+      ...(input?.isActive !== undefined && { isActive: input.isActive }),
+      ...(input?.query && {
+        OR: [
+          { name: { contains: input.query, mode: "insensitive" as const } },
+          { description: { contains: input.query, mode: "insensitive" as const } },
+        ],
+      }),
+    };
+
+    const [policies, total] = await Promise.all([
+      ctx.prisma.buylistPricingPolicy.findMany({
+        where,
+        orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+        take: input?.limit ?? 50,
+        skip: input?.offset ?? 0,
+        include: {
+          _count: {
+            select: { buylists: true },
+          },
+        },
+      }),
+      ctx.prisma.buylistPricingPolicy.count({ where }),
+    ]);
+
+    return {
+      policies,
+      total,
+      hasMore: (input?.offset ?? 0) + policies.length < total,
+    };
+  }),
+
+  /**
+   * Get a single pricing policy by ID
+   */
+  getById: protectedClientProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+        where: {
+          id: input.id,
+          installationId: ctx.installationId,
+        },
+        include: {
+          _count: {
+            select: { buylists: true },
+          },
+        },
+      });
+
+      if (!policy) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Pricing policy not found",
+        });
+      }
+
+      return policy;
+    }),
+
+  /**
+   * Get the default pricing policy
+   */
+  getDefault: protectedClientProcedure.query(async ({ ctx }) => {
+    const policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+      where: {
+        installationId: ctx.installationId,
+        isDefault: true,
+        isActive: true,
+      },
+    });
+
+    return policy;
+  }),
+
+  /**
+   * Create a new pricing policy
+   */
+  create: protectedClientProcedure.input(pricingPolicyCreateSchema).mutation(async ({ ctx, input }) => {
+    // Check for duplicate name
+    const existing = await ctx.prisma.buylistPricingPolicy.findFirst({
+      where: {
+        installationId: ctx.installationId,
+        name: input.name,
+      },
+    });
+
+    if (existing) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `Pricing policy with name "${input.name}" already exists`,
+      });
+    }
+
+    // Validate policy type specific requirements
+    validatePolicyTypeRequirements(input.policyType, input);
+
+    // If this is being set as default, unset any existing default
+    if (input.isDefault) {
+      await ctx.prisma.buylistPricingPolicy.updateMany({
+        where: {
+          installationId: ctx.installationId,
+          isDefault: true,
+        },
+        data: { isDefault: false },
+      });
+    }
+
+    const policy = await ctx.prisma.buylistPricingPolicy.create({
+      data: {
+        installationId: ctx.installationId,
+        name: input.name,
+        description: input.description ?? null,
+        isDefault: input.isDefault ?? false,
+        isActive: input.isActive ?? true,
+        policyType: input.policyType,
+        basePercentage: input.basePercentage ? new Decimal(input.basePercentage) : null,
+        conditionMultipliers: input.conditionMultipliers ?? DEFAULT_CONDITION_MULTIPLIERS,
+        tieredRules: input.tieredRules ? JSON.parse(JSON.stringify(input.tieredRules)) : undefined,
+        minimumPrice: input.minimumPrice ? new Decimal(input.minimumPrice) : null,
+        maximumPrice: input.maximumPrice ? new Decimal(input.maximumPrice) : null,
+        categoryOverrides: input.categoryOverrides ? JSON.parse(JSON.stringify(input.categoryOverrides)) : undefined,
+      },
+    });
+
+    return policy;
+  }),
+
+  /**
+   * Update an existing pricing policy
+   */
+  update: protectedClientProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        data: pricingPolicyUpdateSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const existing = await ctx.prisma.buylistPricingPolicy.findFirst({
+        where: {
+          id: input.id,
+          installationId: ctx.installationId,
+        },
+      });
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Pricing policy not found",
+        });
+      }
+
+      // Check for duplicate name if changing
+      if (input.data.name && input.data.name !== existing.name) {
+        const duplicate = await ctx.prisma.buylistPricingPolicy.findFirst({
+          where: {
+            installationId: ctx.installationId,
+            name: input.data.name,
+            id: { not: input.id },
+          },
+        });
+
+        if (duplicate) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `Pricing policy with name "${input.data.name}" already exists`,
+          });
+        }
+      }
+
+      // Validate policy type specific requirements
+      const policyType = input.data.policyType ?? existing.policyType;
+      const tieredRules = input.data.tieredRules ?? (existing.tieredRules as Array<{ minValue: number; maxValue: number | null; percentage: number }> | null);
+      validatePolicyTypeRequirements(policyType, {
+        basePercentage: input.data.basePercentage ?? (existing.basePercentage?.toNumber() ?? null),
+        tieredRules,
+      });
+
+      // If this is being set as default, unset any existing default
+      if (input.data.isDefault && !existing.isDefault) {
+        await ctx.prisma.buylistPricingPolicy.updateMany({
+          where: {
+            installationId: ctx.installationId,
+            isDefault: true,
+            id: { not: input.id },
+          },
+          data: { isDefault: false },
+        });
+      }
+
+      const policy = await ctx.prisma.buylistPricingPolicy.update({
+        where: { id: input.id },
+        data: {
+          ...(input.data.name !== undefined && { name: input.data.name }),
+          ...(input.data.description !== undefined && { description: input.data.description }),
+          ...(input.data.isDefault !== undefined && { isDefault: input.data.isDefault }),
+          ...(input.data.isActive !== undefined && { isActive: input.data.isActive }),
+          ...(input.data.policyType !== undefined && { policyType: input.data.policyType }),
+          ...(input.data.basePercentage !== undefined && {
+            basePercentage: input.data.basePercentage ? new Decimal(input.data.basePercentage) : null,
+          }),
+          ...(input.data.conditionMultipliers !== undefined && {
+            conditionMultipliers: input.data.conditionMultipliers ? JSON.parse(JSON.stringify(input.data.conditionMultipliers)) : undefined,
+          }),
+          ...(input.data.tieredRules !== undefined && {
+            tieredRules: input.data.tieredRules ? JSON.parse(JSON.stringify(input.data.tieredRules)) : undefined,
+          }),
+          ...(input.data.minimumPrice !== undefined && {
+            minimumPrice: input.data.minimumPrice ? new Decimal(input.data.minimumPrice) : null,
+          }),
+          ...(input.data.maximumPrice !== undefined && {
+            maximumPrice: input.data.maximumPrice ? new Decimal(input.data.maximumPrice) : null,
+          }),
+          ...(input.data.categoryOverrides !== undefined && {
+            categoryOverrides: input.data.categoryOverrides ? JSON.parse(JSON.stringify(input.data.categoryOverrides)) : undefined,
+          }),
+        },
+      });
+
+      return policy;
+    }),
+
+  /**
+   * Delete a pricing policy
+   */
+  delete: protectedClientProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = await ctx.prisma.buylistPricingPolicy.findFirst({
+        where: {
+          id: input.id,
+          installationId: ctx.installationId,
+        },
+        include: {
+          _count: {
+            select: { buylists: true },
+          },
+        },
+      });
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Pricing policy not found",
+        });
+      }
+
+      if (existing._count.buylists > 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Cannot delete policy with ${existing._count.buylists} associated buylist(s). Deactivate it instead.`,
+        });
+      }
+
+      await ctx.prisma.buylistPricingPolicy.delete({
+        where: { id: input.id },
+      });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set a policy as the default
+   */
+  setDefault: protectedClientProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = await ctx.prisma.buylistPricingPolicy.findFirst({
+        where: {
+          id: input.id,
+          installationId: ctx.installationId,
+        },
+      });
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Pricing policy not found",
+        });
+      }
+
+      if (!existing.isActive) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Cannot set an inactive policy as default",
+        });
+      }
+
+      // Unset current default
+      await ctx.prisma.buylistPricingPolicy.updateMany({
+        where: {
+          installationId: ctx.installationId,
+          isDefault: true,
+        },
+        data: { isDefault: false },
+      });
+
+      // Set new default
+      const policy = await ctx.prisma.buylistPricingPolicy.update({
+        where: { id: input.id },
+        data: { isDefault: true },
+      });
+
+      return policy;
+    }),
+
+  /**
+   * Calculate buy price for a card based on a policy
+   */
+  calculatePrice: protectedClientProcedure
+    .input(
+      z.object({
+        policyId: z.string().uuid().optional(),
+        marketPrice: z.number().min(0),
+        condition: z.enum(["NM", "LP", "MP", "HP", "DMG"]),
+        categoryId: z.string().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      // Get policy (use specified or default)
+      let policy;
+      if (input.policyId) {
+        policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+          where: {
+            id: input.policyId,
+            installationId: ctx.installationId,
+          },
+        });
+      } else {
+        policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+          where: {
+            installationId: ctx.installationId,
+            isDefault: true,
+            isActive: true,
+          },
+        });
+      }
+
+      if (!policy) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No pricing policy found",
+        });
+      }
+
+      // Calculate base offer
+      let baseOffer: number;
+
+      switch (policy.policyType) {
+        case "PERCENTAGE":
+          if (!policy.basePercentage) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Policy missing base percentage",
+            });
+          }
+          baseOffer = input.marketPrice * (policy.basePercentage.toNumber() / 100);
+          break;
+
+        case "FIXED_DISCOUNT":
+          if (!policy.basePercentage) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Policy missing discount amount",
+            });
+          }
+          baseOffer = Math.max(0, input.marketPrice - policy.basePercentage.toNumber());
+          break;
+
+        case "TIERED": {
+          const rules = policy.tieredRules as Array<{
+            minValue: number;
+            maxValue: number | null;
+            percentage: number;
+          }> | null;
+          if (!rules || rules.length === 0) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Policy missing tiered rules",
+            });
+          }
+
+          // Find matching tier
+          const tier = rules.find(
+            (r) => input.marketPrice >= r.minValue && (r.maxValue === null || input.marketPrice < r.maxValue)
+          );
+
+          if (!tier) {
+            // Use lowest tier if no match (for values below minimum)
+            const lowestTier = rules.reduce((min, r) => (r.minValue < min.minValue ? r : min), rules[0]);
+            baseOffer = input.marketPrice * (lowestTier.percentage / 100);
+          } else {
+            baseOffer = input.marketPrice * (tier.percentage / 100);
+          }
+          break;
+        }
+
+        case "CUSTOM":
+          /*
+           * Custom policies would need external evaluation.
+           * For now, fall back to a simple 50% offer.
+           */
+          baseOffer = input.marketPrice * 0.5;
+          break;
+
+        default:
+          baseOffer = input.marketPrice * 0.5;
+      }
+
+      // Apply condition multiplier
+      const multipliers = (policy.conditionMultipliers as Record<string, number>) ?? DEFAULT_CONDITION_MULTIPLIERS;
+      const conditionMultiplier = multipliers[input.condition] ?? 1.0;
+      let finalOffer = baseOffer * conditionMultiplier;
+
+      // Apply category override if present
+      if (input.categoryId && policy.categoryOverrides) {
+        const overrides = policy.categoryOverrides as Record<string, number>;
+        const categoryMultiplier = overrides[input.categoryId];
+        if (categoryMultiplier !== undefined) {
+          finalOffer = finalOffer * (categoryMultiplier / 100);
+        }
+      }
+
+      // Apply min/max constraints
+      if (policy.minimumPrice && finalOffer < policy.minimumPrice.toNumber()) {
+        finalOffer = policy.minimumPrice.toNumber();
+      }
+      if (policy.maximumPrice && finalOffer > policy.maximumPrice.toNumber()) {
+        finalOffer = policy.maximumPrice.toNumber();
+      }
+
+      // Round to 2 decimal places
+      finalOffer = Math.round(finalOffer * 100) / 100;
+
+      return {
+        policyId: policy.id,
+        policyName: policy.name,
+        marketPrice: input.marketPrice,
+        condition: input.condition,
+        baseOffer: Math.round(baseOffer * 100) / 100,
+        conditionMultiplier,
+        finalOffer,
+      };
+    }),
+
+  /**
+   * Bulk calculate prices for multiple items
+   */
+  calculatePrices: protectedClientProcedure
+    .input(
+      z.object({
+        policyId: z.string().uuid().optional(),
+        items: z.array(
+          z.object({
+            variantId: z.string(),
+            marketPrice: z.number().min(0),
+            condition: z.enum(["NM", "LP", "MP", "HP", "DMG"]),
+            categoryId: z.string().optional(),
+          })
+        ),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      // Get policy
+      let policy;
+      if (input.policyId) {
+        policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+          where: {
+            id: input.policyId,
+            installationId: ctx.installationId,
+          },
+        });
+      } else {
+        policy = await ctx.prisma.buylistPricingPolicy.findFirst({
+          where: {
+            installationId: ctx.installationId,
+            isDefault: true,
+            isActive: true,
+          },
+        });
+      }
+
+      if (!policy) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No pricing policy found",
+        });
+      }
+
+      const multipliers = (policy.conditionMultipliers as Record<string, number>) ?? DEFAULT_CONDITION_MULTIPLIERS;
+
+      const results = input.items.map((item) => {
+        let baseOffer: number;
+
+        switch (policy.policyType) {
+          case "PERCENTAGE":
+            baseOffer = item.marketPrice * ((policy.basePercentage?.toNumber() ?? 50) / 100);
+            break;
+          case "FIXED_DISCOUNT":
+            baseOffer = Math.max(0, item.marketPrice - (policy.basePercentage?.toNumber() ?? 0));
+            break;
+          case "TIERED": {
+            const rules = policy.tieredRules as Array<{
+              minValue: number;
+              maxValue: number | null;
+              percentage: number;
+            }> | null;
+            const tier = rules?.find(
+              (r) => item.marketPrice >= r.minValue && (r.maxValue === null || item.marketPrice < r.maxValue)
+            );
+            baseOffer = item.marketPrice * ((tier?.percentage ?? 50) / 100);
+            break;
+          }
+          default:
+            baseOffer = item.marketPrice * 0.5;
+        }
+
+        const conditionMultiplier = multipliers[item.condition] ?? 1.0;
+        let finalOffer = baseOffer * conditionMultiplier;
+
+        // Apply category override
+        if (item.categoryId && policy.categoryOverrides) {
+          const overrides = policy.categoryOverrides as Record<string, number>;
+          const categoryMultiplier = overrides[item.categoryId];
+          if (categoryMultiplier !== undefined) {
+            finalOffer = finalOffer * (categoryMultiplier / 100);
+          }
+        }
+
+        // Apply constraints
+        if (policy.minimumPrice && finalOffer < policy.minimumPrice.toNumber()) {
+          finalOffer = policy.minimumPrice.toNumber();
+        }
+        if (policy.maximumPrice && finalOffer > policy.maximumPrice.toNumber()) {
+          finalOffer = policy.maximumPrice.toNumber();
+        }
+
+        return {
+          variantId: item.variantId,
+          marketPrice: item.marketPrice,
+          condition: item.condition,
+          finalOffer: Math.round(finalOffer * 100) / 100,
+        };
+      });
+
+      return {
+        policyId: policy.id,
+        policyName: policy.name,
+        results,
+      };
+    }),
+});
+
+/**
+ * Validate that required fields are present for each policy type
+ */
+function validatePolicyTypeRequirements(
+  policyType: string,
+  input: {
+    basePercentage?: number | null;
+    tieredRules?: Array<{ minValue: number; maxValue: number | null; percentage: number }> | null;
+  }
+) {
+  switch (policyType) {
+    case "PERCENTAGE":
+      if (input.basePercentage === null || input.basePercentage === undefined) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "PERCENTAGE policy type requires basePercentage",
+        });
+      }
+      break;
+
+    case "FIXED_DISCOUNT":
+      if (input.basePercentage === null || input.basePercentage === undefined) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "FIXED_DISCOUNT policy type requires basePercentage (the discount amount)",
+        });
+      }
+      break;
+
+    case "TIERED":
+      if (!input.tieredRules || input.tieredRules.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "TIERED policy type requires at least one tiered rule",
+        });
+      }
+      break;
+
+    case "CUSTOM":
+      // Custom policies have no specific requirements
+      break;
+  }
+}
