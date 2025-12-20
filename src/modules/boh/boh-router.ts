@@ -6,7 +6,7 @@ import { z } from "zod";
 import { extractUserFromToken } from "@/lib/jwt-utils";
 import { createLogger } from "@/lib/logger";
 import { createSaleorClient, StockUpdateResult } from "@/lib/saleor-client";
-import { computeWacForNewEvent } from "@/lib/wac-service";
+import { computeWacForNewEventOptimized } from "@/lib/wac-service";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
 
@@ -225,7 +225,8 @@ export const bohRouter = router({
       // Create cost layer events - use finalPrice (what we paid customer) as unit cost
       let costEventsCreated = 0;
       for (const { line, qtyAccepted } of linesToProcess) {
-        const { wacAtEvent, qtyOnHandAtEvent } = await computeWacForNewEvent({
+        // Use optimized O(1) WAC calculation
+        const wacResult = await computeWacForNewEventOptimized({
           prisma: ctx.prisma,
           installationId: ctx.installationId,
           variantId: line.saleorVariantId,
@@ -246,8 +247,10 @@ export const bohRouter = router({
             currency: line.currency,
             landedCostDelta: new Decimal(0),
             sourceBuylistLineId: line.id,
-            wacAtEvent,
-            qtyOnHandAtEvent,
+            wacAtEvent: wacResult.wacAtEvent,
+            qtyOnHandAtEvent: wacResult.qtyOnHandAtEvent,
+            totalValueAtEvent: wacResult.totalValueAtEvent,
+            previousEventId: wacResult.previousEventId,
             createdBy: getUserId(ctx),
           },
         });

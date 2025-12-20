@@ -91,6 +91,7 @@ const createAndPaySchema = z.object({
   payoutMethod: payoutMethodEnum,
   payoutReference: z.string().optional().nullable(), // Check #, transaction ID, etc.
   lines: z.array(buylistLineSchema).min(1, "At least one line is required"),
+  idempotencyKey: z.string().optional(), // Client-provided key to prevent duplicate submissions
 });
 
 /**
@@ -331,6 +332,30 @@ export const buylistsRouter = router({
    * Creates buylist, records payout, sets status to PENDING_VERIFICATION
    */
   createAndPay: protectedClientProcedure.input(createAndPaySchema).mutation(async ({ ctx, input }) => {
+    // Generate or use provided idempotency key
+    const idempotencyKey =
+      input.idempotencyKey ??
+      `buylist-${ctx.installationId}-${Date.now()}-${input.customerName ?? "walkin"}-${input.lines.length}`;
+
+    // Idempotency check: Return existing buylist if this key was already processed
+    const existingPayout = await ctx.prisma.buylistPayout.findUnique({
+      where: { idempotencyKey },
+      include: {
+        buylist: {
+          include: { lines: true },
+        },
+      },
+    });
+
+    if (existingPayout?.buylist) {
+      logger.info("Idempotency check: returning existing buylist", {
+        idempotencyKey,
+        buylistId: existingPayout.buylist.id,
+        buylistNumber: existingPayout.buylist.buylistNumber,
+      });
+      return existingPayout.buylist;
+    }
+
     // Generate buylist number
     const buylistNumber = await generateBuylistNumber(ctx.prisma, ctx.installationId);
 
@@ -412,7 +437,7 @@ export const buylistsRouter = router({
         },
       });
 
-      // Create payout record
+      // Create payout record with idempotency key
       await tx.buylistPayout.create({
         data: {
           buylistId: newBuylist.id,
@@ -423,6 +448,7 @@ export const buylistsRouter = router({
           reference: input.payoutReference ?? null,
           processedAt: now,
           processedBy: userId,
+          idempotencyKey,
         },
       });
 
