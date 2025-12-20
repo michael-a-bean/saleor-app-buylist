@@ -89,6 +89,49 @@ const GET_VARIANT_BY_ID_QUERY = gql`
   }
 `;
 
+// Stock Queries
+const GET_VARIANT_STOCKS_QUERY = gql`
+  query GetVariantStocks($variantId: ID!, $channel: String!) {
+    productVariant(id: $variantId, channel: $channel) {
+      id
+      sku
+      stocks {
+        id
+        warehouse {
+          id
+          name
+        }
+        quantity
+      }
+    }
+  }
+`;
+
+// Stock Mutation - Creates stock if it doesn't exist, updates if it does
+const PRODUCT_VARIANT_STOCKS_UPDATE_MUTATION = gql`
+  mutation ProductVariantStocksUpdate($variantId: ID!, $stocks: [StockInput!]!) {
+    productVariantStocksUpdate(variantId: $variantId, stocks: $stocks) {
+      productVariant {
+        id
+        sku
+        stocks {
+          id
+          quantity
+          warehouse {
+            id
+            name
+          }
+        }
+      }
+      errors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
 // Type definitions
 export interface SaleorWarehouse {
   id: string;
@@ -160,6 +203,54 @@ interface SearchVariantsResponse {
 
 interface GetVariantResponse {
   productVariant: SaleorVariant | null;
+}
+
+interface VariantWithStocks {
+  id: string;
+  sku: string | null;
+  stocks: Array<{
+    id: string;
+    warehouse: {
+      id: string;
+      name: string;
+    };
+    quantity: number;
+  }>;
+}
+
+interface GetVariantStocksResponse {
+  productVariant: VariantWithStocks | null;
+}
+
+interface ProductVariantStocksUpdateResponse {
+  productVariantStocksUpdate: {
+    productVariant: {
+      id: string;
+      sku: string | null;
+      stocks: Array<{
+        id: string;
+        quantity: number;
+        warehouse: {
+          id: string;
+          name: string;
+        };
+      }>;
+    } | null;
+    errors: Array<{
+      field: string | null;
+      message: string;
+      code: string;
+    }>;
+  } | null;
+}
+
+export interface StockUpdateResult {
+  success: boolean;
+  variantId: string;
+  warehouseId: string;
+  previousQuantity: number;
+  newQuantity: number;
+  error?: string;
 }
 
 /**
@@ -338,6 +429,145 @@ export class SaleorClient {
     }
 
     return variantToCardResult(result.data.productVariant);
+  }
+
+  /**
+   * Get current stock quantity for a variant in a specific warehouse
+   */
+  async getStock(variantId: string, warehouseId: string): Promise<number> {
+    logger.debug("Getting stock", { variantId, warehouseId });
+
+    const result = await this.client
+      .query<GetVariantStocksResponse>(GET_VARIANT_STOCKS_QUERY, {
+        variantId,
+        channel: this.channel,
+      })
+      .toPromise();
+
+    if (result.error) {
+      logger.error("Failed to get stock", { error: result.error.message });
+      throw new Error(`Failed to get stock: ${result.error.message}`);
+    }
+
+    const stocks = result.data?.productVariant?.stocks ?? [];
+    const stock = stocks.find((s) => s.warehouse.id === warehouseId);
+
+    return stock?.quantity ?? 0;
+  }
+
+  /**
+   * Update stock for a single variant in a warehouse
+   * Sets the absolute quantity value
+   */
+  async updateStock(
+    variantId: string,
+    warehouseId: string,
+    quantity: number
+  ): Promise<{ success: boolean; newQuantity: number; error?: string }> {
+    logger.info("Updating stock", { variantId, warehouseId, quantity });
+
+    const result = await this.client
+      .mutation<ProductVariantStocksUpdateResponse>(PRODUCT_VARIANT_STOCKS_UPDATE_MUTATION, {
+        variantId,
+        stocks: [{ warehouse: warehouseId, quantity }],
+      })
+      .toPromise();
+
+    if (result.error) {
+      logger.error("Failed to update stock", { error: result.error.message });
+      return { success: false, newQuantity: 0, error: result.error.message };
+    }
+
+    const response = result.data?.productVariantStocksUpdate;
+
+    if (!response) {
+      return { success: false, newQuantity: 0, error: "No response from mutation" };
+    }
+
+    if (response.errors && response.errors.length > 0) {
+      const errorMsg = response.errors.map((e) => e.message).join(", ");
+      logger.error("Stock update errors", { errors: response.errors });
+      return { success: false, newQuantity: 0, error: errorMsg };
+    }
+
+    const updatedStock = response.productVariant?.stocks.find(
+      (s) => s.warehouse.id === warehouseId
+    );
+    const newQuantity = updatedStock?.quantity ?? quantity;
+
+    logger.info("Stock updated successfully", { variantId, warehouseId, newQuantity });
+
+    return { success: true, newQuantity };
+  }
+
+  /**
+   * Adjust stock by adding a delta (positive or negative)
+   * Fetches current stock, calculates new quantity, then updates
+   */
+  async adjustStock(
+    variantId: string,
+    warehouseId: string,
+    delta: number
+  ): Promise<StockUpdateResult> {
+    logger.info("Adjusting stock", { variantId, warehouseId, delta });
+
+    const previousQuantity = await this.getStock(variantId, warehouseId);
+    const newQuantity = previousQuantity + delta;
+
+    if (newQuantity < 0) {
+      logger.warn("Stock adjustment would result in negative quantity", {
+        variantId,
+        warehouseId,
+        previousQuantity,
+        delta,
+        newQuantity,
+      });
+    }
+
+    const result = await this.updateStock(variantId, warehouseId, newQuantity);
+
+    return {
+      success: result.success,
+      variantId,
+      warehouseId,
+      previousQuantity,
+      newQuantity: result.success ? result.newQuantity : previousQuantity,
+      error: result.error,
+    };
+  }
+
+  /**
+   * Bulk adjust stock for multiple variants
+   * Returns results for each adjustment
+   */
+  async bulkAdjustStock(
+    adjustments: Array<{ variantId: string; warehouseId: string; delta: number }>
+  ): Promise<StockUpdateResult[]> {
+    logger.info("Bulk adjusting stock", { count: adjustments.length });
+
+    const results: StockUpdateResult[] = [];
+
+    for (const adj of adjustments) {
+      const result = await this.adjustStock(adj.variantId, adj.warehouseId, adj.delta);
+      results.push(result);
+
+      // If any adjustment fails, log but continue with others
+      if (!result.success) {
+        logger.warn("Stock adjustment failed", {
+          variantId: adj.variantId,
+          error: result.error,
+        });
+      }
+    }
+
+    const successCount = results.filter((r) => r.success).length;
+    logger.info("Bulk stock adjustment complete", {
+      total: adjustments.length,
+      success: successCount,
+      failed: adjustments.length - successCount,
+    });
+
+    return results;
   }
 }
 

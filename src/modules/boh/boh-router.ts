@@ -3,8 +3,21 @@ import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 
+import { extractUserFromToken } from "@/lib/jwt-utils";
+import { createLogger } from "@/lib/logger";
+import { createSaleorClient, StockUpdateResult } from "@/lib/saleor-client";
+import { computeWacForNewEvent } from "@/lib/wac-service";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+
+const logger = createLogger("boh-router");
+
+/**
+ * Get a user-friendly identifier from context
+ */
+function getUserId(ctx: { token?: string | null }): string | null {
+  return extractUserFromToken(ctx.token);
+}
 
 // Condition enum for validation
 const conditionEnum = z.enum(["NM", "LP", "MP", "HP", "DMG"]);
@@ -244,7 +257,7 @@ export const bohRouter = router({
         data: {
           totalFinalAmount,
           reviewedAt: new Date(),
-          reviewedBy: ctx.token ?? null,
+          reviewedBy: getUserId(ctx),
         },
       });
 
@@ -253,7 +266,7 @@ export const bohRouter = router({
         data: {
           buylistId: input.buylistId,
           action: "REVIEWED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: {
             linesReviewed: input.lines.length,
             totalFinalAmount: totalFinalAmount.toString(),
@@ -308,7 +321,7 @@ export const bohRouter = router({
         data: {
           status: "APPROVED",
           reviewedAt: new Date(),
-          reviewedBy: ctx.token ?? null,
+          reviewedBy: getUserId(ctx),
         },
       });
 
@@ -317,7 +330,7 @@ export const bohRouter = router({
         data: {
           buylistId: input.buylistId,
           action: "APPROVED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
         },
       });
 
@@ -362,7 +375,7 @@ export const bohRouter = router({
           status: "REJECTED",
           internalNotes: input.reason,
           reviewedAt: new Date(),
-          reviewedBy: ctx.token ?? null,
+          reviewedBy: getUserId(ctx),
         },
       });
 
@@ -371,7 +384,7 @@ export const bohRouter = router({
         data: {
           buylistId: input.buylistId,
           action: "REJECTED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: { reason: input.reason },
         },
       });
@@ -410,36 +423,118 @@ export const bohRouter = router({
         });
       }
 
-      // Create cost layer events for each accepted line
+      // Build the list of stock adjustments
       let totalReceivedQty = 0;
-      const costEvents = [];
+      const stockAdjustments: Array<{ variantId: string; warehouseId: string; delta: number }> = [];
+      const linesToProcess: Array<{
+        line: typeof buylist.lines[0];
+        qtyAccepted: number;
+      }> = [];
 
       for (const line of buylist.lines) {
         const qtyAccepted = line.qtyAccepted ?? 0;
         if (qtyAccepted <= 0) continue;
 
         totalReceivedQty += qtyAccepted;
+        linesToProcess.push({ line, qtyAccepted });
 
-        // Create cost layer event
-        costEvents.push({
-          installationId: ctx.installationId,
-          eventType: "BUYLIST_RECEIPT" as const,
-          saleorVariantId: line.saleorVariantId,
-          saleorWarehouseId: buylist.saleorWarehouseId,
-          qtyDelta: qtyAccepted,
-          unitCost: line.finalPrice,
-          currency: line.currency,
-          landedCostDelta: new Decimal(0),
-          sourceBuylistLineId: line.id,
-          eventTimestamp: new Date(),
-          createdBy: ctx.token ?? null,
+        // Add stock adjustment (positive delta = adding to inventory)
+        stockAdjustments.push({
+          variantId: line.saleorVariantId,
+          warehouseId: buylist.saleorWarehouseId,
+          delta: qtyAccepted,
         });
       }
 
-      // Batch create cost events
-      if (costEvents.length > 0) {
-        await ctx.prisma.costLayerEvent.createMany({
-          data: costEvents,
+      // Update Saleor stock FIRST (before changing buylist status)
+      // This ensures we can retry if stock update fails
+      let stockResults: StockUpdateResult[] = [];
+      if (stockAdjustments.length > 0) {
+        logger.info("Updating Saleor stock for buylist", {
+          buylistId: input.buylistId,
+          adjustmentCount: stockAdjustments.length,
+        });
+
+        const saleorClient = createSaleorClient(ctx.apiClient);
+        stockResults = await saleorClient.bulkAdjustStock(stockAdjustments);
+
+        // Check for failures
+        const failures = stockResults.filter((r) => !r.success);
+        if (failures.length > 0) {
+          logger.error("Some stock updates failed", {
+            buylistId: input.buylistId,
+            failures: failures.map((f) => ({
+              variantId: f.variantId,
+              error: f.error,
+            })),
+          });
+
+          // If ALL failed, throw error to prevent status change
+          if (failures.length === stockResults.length) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `Failed to update stock in Saleor: ${failures[0].error}`,
+            });
+          }
+
+          // If only some failed, log warning but continue
+          // The audit event will record which ones failed
+          logger.warn("Partial stock update failure - continuing with receive", {
+            buylistId: input.buylistId,
+            successCount: stockResults.length - failures.length,
+            failureCount: failures.length,
+          });
+        }
+
+        logger.info("Saleor stock update complete", {
+          buylistId: input.buylistId,
+          successCount: stockResults.filter((r) => r.success).length,
+        });
+      }
+
+      // Create cost layer events with WAC calculation
+      // Must process sequentially since each WAC depends on previous events
+      let costEventsCreated = 0;
+      for (const { line, qtyAccepted } of linesToProcess) {
+        // Compute WAC for this new event
+        const { wacAtEvent, qtyOnHandAtEvent } = await computeWacForNewEvent({
+          prisma: ctx.prisma,
+          installationId: ctx.installationId,
+          variantId: line.saleorVariantId,
+          warehouseId: buylist.saleorWarehouseId,
+          newQtyDelta: qtyAccepted,
+          newUnitCost: new Decimal(line.finalPrice.toString()),
+          newLandedCostDelta: new Decimal(0),
+        });
+
+        // Create cost layer event with computed WAC
+        await ctx.prisma.costLayerEvent.create({
+          data: {
+            installationId: ctx.installationId,
+            eventType: "BUYLIST_RECEIPT",
+            saleorVariantId: line.saleorVariantId,
+            saleorWarehouseId: buylist.saleorWarehouseId,
+            qtyDelta: qtyAccepted,
+            unitCost: line.finalPrice,
+            currency: line.currency,
+            landedCostDelta: new Decimal(0),
+            sourceBuylistLineId: line.id,
+            wacAtEvent: wacAtEvent,
+            qtyOnHandAtEvent: qtyOnHandAtEvent,
+            createdBy: getUserId(ctx),
+          },
+        });
+
+        costEventsCreated++;
+
+        logger.debug("Created cost layer event", {
+          buylistId: input.buylistId,
+          lineId: line.id,
+          variantId: line.saleorVariantId,
+          qtyAccepted,
+          unitCost: line.finalPrice.toString(),
+          wacAtEvent: wacAtEvent.toFixed(4),
+          qtyOnHandAtEvent,
         });
       }
 
@@ -450,30 +545,44 @@ export const bohRouter = router({
           status: "RECEIVED",
           totalReceivedQty,
           receivedAt: new Date(),
-          receivedBy: ctx.token ?? null,
+          receivedBy: getUserId(ctx),
         },
       });
 
-      // Audit event
+      // Audit event with stock update results
       await ctx.prisma.buylistAuditEvent.create({
         data: {
           buylistId: input.buylistId,
           action: "RECEIVED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: {
             totalReceivedQty,
-            costEventsCreated: costEvents.length,
+            costEventsCreated,
+            stockUpdates: {
+              attempted: stockAdjustments.length,
+              successful: stockResults.filter((r) => r.success).length,
+              failed: stockResults.filter((r) => !r.success).length,
+              details: stockResults.map((r) => ({
+                variantId: r.variantId,
+                success: r.success,
+                previousQty: r.previousQuantity,
+                newQty: r.newQuantity,
+                error: r.error,
+              })),
+            },
           },
         },
       });
 
-      // TODO: Call Saleor GraphQL to update stock quantities
-      // This would use the apiClient to call stockBulkUpdate mutation
-
       return {
         buylist: updated,
         totalReceivedQty,
-        costEventsCreated: costEvents.length,
+        costEventsCreated,
+        stockUpdates: {
+          attempted: stockAdjustments.length,
+          successful: stockResults.filter((r) => r.success).length,
+          failed: stockResults.filter((r) => !r.success).length,
+        },
       };
     }),
 
@@ -530,7 +639,7 @@ export const bohRouter = router({
         reference: input.reference ?? null,
         notes: input.notes ?? null,
         processedAt: new Date(),
-        processedBy: ctx.token ?? null,
+        processedBy: getUserId(ctx),
       },
     });
 
@@ -543,7 +652,7 @@ export const bohRouter = router({
         data: {
           status: "PAID",
           paidAt: new Date(),
-          paidBy: ctx.token ?? null,
+          paidBy: getUserId(ctx),
         },
       });
 
@@ -552,7 +661,7 @@ export const bohRouter = router({
         data: {
           buylistId: input.buylistId,
           action: "PAID",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: {
             totalPaid: newTotal.toString(),
             payoutId: payout.id,
@@ -565,7 +674,7 @@ export const bohRouter = router({
         data: {
           buylistId: input.buylistId,
           action: "PARTIAL_PAYOUT",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: {
             amount: input.amount,
             method: input.method,

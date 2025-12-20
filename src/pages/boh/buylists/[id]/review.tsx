@@ -45,6 +45,10 @@ export default function BOHReviewPage() {
 
   const approveMutation = trpcClient.boh.approve.useMutation({
     onSuccess: () => {
+      // Invalidate queue caches before navigating
+      utils.boh.queue.invalidate();
+      utils.boh.stats.invalidate();
+      utils.boh.readyToReceive.invalidate();
       router.push("/boh/queue");
     },
     onError: (err) => {
@@ -54,6 +58,9 @@ export default function BOHReviewPage() {
 
   const rejectMutation = trpcClient.boh.reject.useMutation({
     onSuccess: () => {
+      // Invalidate queue caches before navigating
+      utils.boh.queue.invalidate();
+      utils.boh.stats.invalidate();
       router.push("/boh/queue");
     },
     onError: (err) => {
@@ -99,9 +106,22 @@ export default function BOHReviewPage() {
     });
   };
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!buylistQuery.data) return;
-    approveMutation.mutate({ buylistId: buylistQuery.data.id });
+    setError(null);
+
+    // First save the review to set qtyAccepted values
+    try {
+      await reviewMutation.mutateAsync({
+        buylistId: buylistQuery.data.id,
+        lines: Object.values(lineReviews),
+        internalNotes,
+      });
+      // Then approve
+      approveMutation.mutate({ buylistId: buylistQuery.data.id });
+    } catch {
+      // Error already handled by onError callback
+    }
   };
 
   const handleReject = () => {

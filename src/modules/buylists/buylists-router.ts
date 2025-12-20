@@ -3,10 +3,18 @@ import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 
+import { extractUserFromToken } from "@/lib/jwt-utils";
 import { createSaleorClient } from "@/lib/saleor-client";
 import { DEFAULT_CONDITION_MULTIPLIERS } from "@/modules/pricing";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+
+/**
+ * Get a user-friendly identifier from context
+ */
+function getUserId(ctx: { token?: string | null }): string | null {
+  return extractUserFromToken(ctx.token);
+}
 
 // Condition enum for validation
 const conditionEnum = z.enum(["NM", "LP", "MP", "HP", "DMG"]);
@@ -282,7 +290,7 @@ export const buylistsRouter = router({
       data: {
         buylistId: buylist.id,
         action: "CREATED",
-        userId: ctx.token ?? null,
+        userId: getUserId(ctx),
         newState: {
           buylistNumber,
           lineCount: input.lines.length,
@@ -600,7 +608,7 @@ export const buylistsRouter = router({
           totalQuotedAmount,
           totalFinalAmount: totalQuotedAmount,
           quotedAt: new Date(),
-          quotedBy: ctx.token ?? null,
+          quotedBy: getUserId(ctx),
         },
         include: {
           lines: true,
@@ -612,7 +620,7 @@ export const buylistsRouter = router({
         data: {
           buylistId: input.id,
           action: "QUOTED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           newState: {
             totalQuotedAmount: totalQuotedAmount.toString(),
             lineCount: buylist.lines.length,
@@ -663,7 +671,7 @@ export const buylistsRouter = router({
         data: {
           buylistId: input.id,
           action: "SUBMITTED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
         },
       });
 
@@ -714,7 +722,7 @@ export const buylistsRouter = router({
         data: {
           buylistId: input.id,
           action: "CANCELLED",
-          userId: ctx.token ?? null,
+          userId: getUserId(ctx),
           metadata: { reason: input.reason },
         },
       });

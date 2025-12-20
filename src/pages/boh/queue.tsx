@@ -10,15 +10,24 @@ export default function BOHQueuePage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<QueueTab>("pending");
 
-  const statsQuery = trpcClient.boh.stats.useQuery();
+  const statsQuery = trpcClient.boh.stats.useQuery(undefined, {
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
   const queueQuery = trpcClient.boh.queue.useQuery(undefined, {
     enabled: activeTab === "pending",
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
   const approvedQuery = trpcClient.boh.readyToReceive.useQuery(undefined, {
     enabled: activeTab === "approved",
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
   const payoutQuery = trpcClient.boh.readyForPayout.useQuery(undefined, {
     enabled: activeTab === "payout",
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
 
   const tabs: { key: QueueTab; label: string; count?: number }[] = [

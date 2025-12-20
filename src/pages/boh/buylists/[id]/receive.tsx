@@ -22,8 +22,15 @@ export default function BOHReceivePage() {
     { enabled: !!id }
   );
 
+  const utils = trpcClient.useUtils();
+
   const receiveMutation = trpcClient.boh.receive.useMutation({
     onSuccess: () => {
+      // Invalidate all BOH caches before navigating
+      utils.boh.queue.invalidate();
+      utils.boh.stats.invalidate();
+      utils.boh.readyToReceive.invalidate();
+      utils.boh.readyForPayout.invalidate();
       router.push("/boh/queue");
     },
     onError: (err) => {
