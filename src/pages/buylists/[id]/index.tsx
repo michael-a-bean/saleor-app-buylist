@@ -34,18 +34,6 @@ export default function BuylistDetailPage() {
 
   const utils = trpcClient.useUtils();
 
-  const generateQuoteMutation = trpcClient.buylists.generateQuote.useMutation({
-    onSuccess: () => {
-      utils.buylists.getById.invalidate({ id: id as string });
-    },
-  });
-
-  const submitMutation = trpcClient.buylists.submit.useMutation({
-    onSuccess: () => {
-      utils.buylists.getById.invalidate({ id: id as string });
-    },
-  });
-
   const cancelMutation = trpcClient.buylists.cancel.useMutation({
     onSuccess: () => {
       utils.buylists.getById.invalidate({ id: id as string });
@@ -98,36 +86,7 @@ export default function BuylistDetailPage() {
           <Button onClick={() => router.push("/buylists")} variant="tertiary">
             Back to List
           </Button>
-          {buylist.status === "DRAFT" && (
-            <>
-              <Button
-                onClick={() => generateQuoteMutation.mutate({ id: buylist.id })}
-                variant="secondary"
-                disabled={generateQuoteMutation.isLoading}
-              >
-                {generateQuoteMutation.isLoading ? "Generating..." : "Generate Quote"}
-              </Button>
-            </>
-          )}
-          {buylist.status === "QUOTED" && (
-            <>
-              <Button
-                onClick={() => generateQuoteMutation.mutate({ id: buylist.id })}
-                variant="tertiary"
-                disabled={generateQuoteMutation.isLoading}
-              >
-                Refresh Quote
-              </Button>
-              <Button
-                onClick={() => submitMutation.mutate({ id: buylist.id })}
-                variant="primary"
-                disabled={submitMutation.isLoading}
-              >
-                {submitMutation.isLoading ? "Submitting..." : "Submit for Review"}
-              </Button>
-            </>
-          )}
-          {["DRAFT", "QUOTED"].includes(buylist.status) && (
+          {buylist.status === "PENDING_VERIFICATION" && (
             <Button
               onClick={() => cancelMutation.mutate({ id: buylist.id })}
               variant="tertiary"

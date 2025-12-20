@@ -1,62 +1,29 @@
 import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
-import { useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 
-type QueueTab = "pending" | "approved" | "payout";
-
 export default function BOHQueuePage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<QueueTab>("pending");
 
   const statsQuery = trpcClient.boh.stats.useQuery(undefined, {
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
+
   const queueQuery = trpcClient.boh.queue.useQuery(undefined, {
-    enabled: activeTab === "pending",
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
-  const approvedQuery = trpcClient.boh.readyToReceive.useQuery(undefined, {
-    enabled: activeTab === "approved",
-    refetchOnWindowFocus: true,
-    staleTime: 0,
-  });
-  const payoutQuery = trpcClient.boh.readyForPayout.useQuery(undefined, {
-    enabled: activeTab === "payout",
-    refetchOnWindowFocus: true,
-    staleTime: 0,
-  });
-
-  const tabs: { key: QueueTab; label: string; count?: number }[] = [
-    { key: "pending", label: "Pending Review", count: statsQuery.data?.pendingReview },
-    { key: "approved", label: "Ready to Receive", count: statsQuery.data?.approved },
-    { key: "payout", label: "Awaiting Payout", count: statsQuery.data?.awaitingPayout },
-  ];
-
-  const getCurrentData = () => {
-    switch (activeTab) {
-      case "pending":
-        return queueQuery;
-      case "approved":
-        return approvedQuery;
-      case "payout":
-        return payoutQuery;
-    }
-  };
-
-  const currentQuery = getCurrentData();
 
   return (
     <Box display="flex" flexDirection="column" gap={6}>
       <Box>
         <Text as="h1" size={8} fontWeight="bold">
-          BOH Queue
+          BOH Verification Queue
         </Text>
         <Text as="p" color="default2">
-          Review, receive, and process buylist payments
+          Verify cards received from customers and add to inventory
         </Text>
       </Box>
 
@@ -64,72 +31,55 @@ export default function BOHQueuePage() {
       {statsQuery.data && (
         <Box display="flex" gap={4} flexWrap="wrap">
           <StatCard
-            label="Reviewed Today"
-            value={statsQuery.data.todayReceived.toString()}
+            label="Pending Verification"
+            value={statsQuery.data.pendingVerification.toString()}
+            highlight
+          />
+          <StatCard
+            label="Verified Today"
+            value={statsQuery.data.todayVerified.toString()}
           />
           <StatCard
             label="Today's Value"
-            value={`$${Number(statsQuery.data.todayReceivedValue).toFixed(2)}`}
+            value={`$${Number(statsQuery.data.todayVerifiedValue).toFixed(2)}`}
           />
           <StatCard
             label="Cards Received"
-            value={statsQuery.data.todayReceivedQty.toString()}
+            value={statsQuery.data.todayVerifiedQty.toString()}
           />
         </Box>
       )}
 
-      {/* Tabs */}
-      <Box display="flex" gap={2} borderBottomWidth={1} borderBottomStyle="solid" borderColor="default1">
-        {tabs.map((tab) => (
-          <Box
-            key={tab.key}
-            paddingX={4}
-            paddingY={3}
-            cursor="pointer"
-            borderBottomWidth={1}
-            borderBottomStyle="solid"
-            borderColor={activeTab === tab.key ? "info1" : "transparent"}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            <Text
-              fontWeight={activeTab === tab.key ? "bold" : "regular"}
-              color={activeTab === tab.key ? "default1" : "default2"}
-            >
-              {tab.label}
-              {tab.count !== undefined && (
-                <Box
-                  as="span"
-                  marginLeft={2}
-                  paddingX={2}
-                  paddingY={1}
-                  borderRadius={4}
-                  backgroundColor="default1"
-                >
-                  {tab.count}
-                </Box>
-              )}
-            </Text>
-          </Box>
-        ))}
+      {/* Queue Header */}
+      <Box
+        padding={4}
+        backgroundColor="info1"
+        borderRadius={4}
+      >
+        <Text>
+          Cards in this queue have already been paid for at the counter.
+          Verify each card is present and update condition if needed, then click &quot;Verify & Receive&quot; to add to inventory.
+        </Text>
       </Box>
 
       {/* Queue List */}
-      {currentQuery.isLoading ? (
+      {queueQuery.isLoading ? (
         <Box display="flex" flexDirection="column" gap={2}>
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} style={{ width: "100%", height: 80 }} />
           ))}
         </Box>
-      ) : currentQuery.isError ? (
+      ) : queueQuery.isError ? (
         <Box padding={4} backgroundColor="critical1" borderRadius={4}>
-          <Text color="critical1">Error: {currentQuery.error.message}</Text>
+          <Text color="critical1">Error: {queueQuery.error.message}</Text>
         </Box>
-      ) : currentQuery.data?.buylists.length === 0 ? (
-        <Box padding={8} display="flex" justifyContent="center">
+      ) : queueQuery.data?.buylists.length === 0 ? (
+        <Box padding={8} display="flex" justifyContent="center" flexDirection="column" alignItems="center" gap={2}>
+          <Text size={6} color="default2">
+            No buylists pending verification
+          </Text>
           <Text color="default2">
-            {activeTab === "pending" && "No buylists pending review"}
-            {activeTab === "approved" && "No buylists ready to receive"}
-            {activeTab === "payout" && "No buylists awaiting payout"}
+            New buylists will appear here after customers are paid at the counter
           </Text>
         </Box>
       ) : (
@@ -140,48 +90,66 @@ export default function BOHQueuePage() {
           borderRadius={4}
           overflow="hidden"
         >
-          {currentQuery.data?.buylists.map((buylist) => (
+          {/* Header */}
+          <Box
+            display="grid"
+            __gridTemplateColumns="1fr 100px 100px 150px 120px"
+            gap={3}
+            padding={4}
+            backgroundColor="default1"
+            alignItems="center"
+          >
+            <Text fontWeight="bold">Buylist</Text>
+            <Text fontWeight="bold">Items</Text>
+            <Text fontWeight="bold">Total Paid</Text>
+            <Text fontWeight="bold">Paid At</Text>
+            <Box />
+          </Box>
+
+          {queueQuery.data?.buylists.map((buylist) => (
             <Box
               key={buylist.id}
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
+              display="grid"
+              __gridTemplateColumns="1fr 100px 100px 150px 120px"
+              gap={3}
               padding={4}
-              borderBottomWidth={1}
-              borderBottomStyle="solid"
+              borderTopWidth={1}
+              borderTopStyle="solid"
               borderColor="default1"
+              alignItems="center"
               cursor="pointer"
-              onClick={() => {
-                if (activeTab === "pending") {
-                  router.push(`/boh/buylists/${buylist.id}/review`);
-                } else if (activeTab === "approved") {
-                  router.push(`/boh/buylists/${buylist.id}/receive`);
-                } else {
-                  router.push(`/buylists/${buylist.id}`);
-                }
-              }}
+              onClick={() => router.push(`/boh/buylists/${buylist.id}/verify`)}
             >
               <Box display="flex" flexDirection="column" gap={1}>
                 <Text fontWeight="bold">{buylist.buylistNumber}</Text>
-                <Text color="default2">
-                  {buylist.customerName || buylist.customerEmail || "Walk-in"} - {buylist._count.lines} items
+                <Text color="default2" size={2}>
+                  {buylist.customerName || buylist.customerEmail || "Walk-in Customer"}
                 </Text>
               </Box>
-              <Box display="flex" alignItems="center" gap={4}>
-                <Box display="flex" flexDirection="column" alignItems="flex-end">
-                  <Text fontWeight="bold">
-                    ${Number(buylist.totalQuotedAmount).toFixed(2)}
-                  </Text>
-                  <Text size={2} color="default2">
-                    Submitted {buylist.submittedAt ? new Date(buylist.submittedAt).toLocaleDateString() : "N/A"}
-                  </Text>
-                </Box>
-                <Button variant="secondary" size="small">
-                  {activeTab === "pending" && "Review"}
-                  {activeTab === "approved" && "Receive"}
-                  {activeTab === "payout" && "Process"}
-                </Button>
-              </Box>
+              <Text>{buylist._count.lines} cards</Text>
+              <Text fontWeight="bold" color="success1">
+                ${Number(buylist.totalQuotedAmount).toFixed(2)}
+              </Text>
+              <Text color="default2" size={2}>
+                {buylist.paidAt
+                  ? new Date(buylist.paidAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })
+                  : "N/A"}
+              </Text>
+              <Button
+                variant="primary"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/boh/buylists/${buylist.id}/verify`);
+                }}
+              >
+                Verify
+              </Button>
             </Box>
           ))}
         </Box>
@@ -190,14 +158,15 @@ export default function BOHQueuePage() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <Box
       padding={4}
       borderRadius={4}
       borderWidth={1}
       borderStyle="solid"
-      borderColor="default1"
+      borderColor={highlight ? "info1" : "default1"}
+      backgroundColor={highlight ? "info1" : "transparent"}
       __minWidth="140px"
     >
       <Text size={2} color="default2">

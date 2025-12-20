@@ -12,6 +12,15 @@ const CONDITIONS = [
   { value: "DMG", label: "Damaged (DMG)" },
 ];
 
+const PAYOUT_METHODS = [
+  { value: "CASH", label: "Cash" },
+  { value: "STORE_CREDIT", label: "Store Credit" },
+  { value: "CHECK", label: "Check" },
+  { value: "BANK_TRANSFER", label: "Bank Transfer" },
+  { value: "PAYPAL", label: "PayPal" },
+  { value: "OTHER", label: "Other" },
+];
+
 interface LineItem {
   id: string;
   variantId: string;
@@ -21,6 +30,7 @@ interface LineItem {
   qty: number;
   condition: string;
   marketPrice: number;
+  buyPrice: number;
 }
 
 interface CardSearchResult {
@@ -47,6 +57,8 @@ export default function NewBuylistPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
+  const [payoutMethod, setPayoutMethod] = useState<string>("CASH");
+  const [payoutReference, setPayoutReference] = useState("");
 
   // Card search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -62,6 +74,9 @@ export default function NewBuylistPage() {
 
   // Fetch warehouses
   const warehousesQuery = trpcClient.buylists.listWarehouses.useQuery();
+
+  // Fetch default pricing policy for buy price calculation
+  const defaultPolicyQuery = trpcClient.pricing.getDefault.useQuery();
 
   // Search cards query
   const searchCardsQuery = trpcClient.buylists.searchCards.useQuery(
@@ -103,7 +118,7 @@ export default function NewBuylistPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const createMutation = trpcClient.buylists.create.useMutation({
+  const createAndPayMutation = trpcClient.buylists.createAndPay.useMutation({
     onSuccess: (data) => {
       router.push(`/buylists/${data.id}`);
     },
@@ -125,11 +140,88 @@ export default function NewBuylistPage() {
     setShowResults(false);
   }, []);
 
+  // Calculate buy price based on policy and condition
+  const calculateBuyPrice = useCallback(
+    (marketPrice: number, condition: string): number => {
+      const policy = defaultPolicyQuery.data;
+      if (!policy) {
+        // Fallback to 50% if no policy
+        return Math.round(marketPrice * 0.5 * 100) / 100;
+      }
+
+      // Get condition multiplier
+      const multipliers = (policy.conditionMultipliers as Record<string, number>) ?? {
+        NM: 1.0,
+        LP: 0.9,
+        MP: 0.75,
+        HP: 0.5,
+        DMG: 0.25,
+      };
+      const conditionMultiplier = multipliers[condition] ?? 1.0;
+
+      // Helper to parse Decimal values (they come as strings from tRPC)
+      const parseDecimal = (value: unknown): number | null => {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "number") return value;
+        if (typeof value === "string") return parseFloat(value);
+        if (typeof value === "object" && value !== null && "toNumber" in value) {
+          return (value as { toNumber: () => number }).toNumber();
+        }
+        return null;
+      };
+
+      const basePercentage = parseDecimal(policy.basePercentage);
+      const minimumPrice = parseDecimal(policy.minimumPrice);
+      const maximumPrice = parseDecimal(policy.maximumPrice);
+
+      // Calculate base offer based on policy type
+      let baseOffer: number;
+      switch (policy.policyType) {
+        case "PERCENTAGE":
+          baseOffer = marketPrice * ((basePercentage ?? 50) / 100);
+          break;
+        case "FIXED_DISCOUNT":
+          baseOffer = Math.max(0, marketPrice - (basePercentage ?? 0));
+          break;
+        case "TIERED": {
+          const rules = policy.tieredRules as Array<{
+            minValue: number;
+            maxValue: number | null;
+            percentage: number;
+          }> | null;
+          const tier = rules?.find(
+            (r) => marketPrice >= r.minValue && (r.maxValue === null || marketPrice < r.maxValue)
+          );
+          baseOffer = marketPrice * ((tier?.percentage ?? 50) / 100);
+          break;
+        }
+        default:
+          baseOffer = marketPrice * 0.5;
+      }
+
+      // Apply condition multiplier
+      let finalOffer = baseOffer * conditionMultiplier;
+
+      // Apply min/max constraints
+      if (minimumPrice !== null && finalOffer < minimumPrice) {
+        finalOffer = minimumPrice;
+      }
+      if (maximumPrice !== null && finalOffer > maximumPrice) {
+        finalOffer = maximumPrice;
+      }
+
+      return Math.round(finalOffer * 100) / 100;
+    },
+    [defaultPolicyQuery.data]
+  );
+
   const addLine = () => {
     if (!selectedCard) {
       setError("Please search and select a card");
       return;
     }
+
+    const buyPrice = calculateBuyPrice(selectedCard.marketPrice, newCondition);
 
     const newLine: LineItem = {
       id: `temp-${Date.now()}`,
@@ -140,6 +232,7 @@ export default function NewBuylistPage() {
       qty: newQty,
       condition: newCondition,
       marketPrice: selectedCard.marketPrice,
+      buyPrice,
     };
 
     setLines([...lines, newLine]);
@@ -157,6 +250,14 @@ export default function NewBuylistPage() {
     setLines(lines.filter((l) => l.id !== id));
   };
 
+  const updateLineQty = (id: string, qty: number) => {
+    setLines(lines.map((l) => (l.id === id ? { ...l, qty: Math.max(1, qty) } : l)));
+  };
+
+  const updateLineBuyPrice = (id: string, buyPrice: number) => {
+    setLines(lines.map((l) => (l.id === id ? { ...l, buyPrice: Math.max(0, buyPrice) } : l)));
+  };
+
   const handleSubmit = () => {
     if (lines.length === 0) {
       setError("Please add at least one item");
@@ -168,16 +269,23 @@ export default function NewBuylistPage() {
       return;
     }
 
+    if (!payoutMethod) {
+      setError("Please select a payout method");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
-    createMutation.mutate({
+    createAndPayMutation.mutate({
       saleorWarehouseId: selectedWarehouseId,
       customerName: customerName || undefined,
       customerEmail: customerEmail || undefined,
       customerPhone: customerPhone || undefined,
       notes: notes || undefined,
       currency: "USD",
+      payoutMethod: payoutMethod as "CASH" | "STORE_CREDIT" | "CHECK" | "BANK_TRANSFER" | "PAYPAL" | "OTHER",
+      payoutReference: payoutReference || undefined,
       lines: lines.map((l) => ({
         saleorVariantId: l.variantId,
         saleorVariantSku: l.variantSku,
@@ -185,6 +293,7 @@ export default function NewBuylistPage() {
         qty: l.qty,
         condition: l.condition as "NM" | "LP" | "MP" | "HP" | "DMG",
         marketPrice: l.marketPrice,
+        buyPrice: l.buyPrice,
       })),
     });
   };
@@ -194,13 +303,13 @@ export default function NewBuylistPage() {
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box>
           <Text as="h1" size={8} fontWeight="bold">
-            New Buylist
+            Buy Cards from Customer
           </Text>
           <Text as="p" color="default2">
-            Create a new card buyback transaction
+            Add cards, set prices, and pay customer. Cards will queue for BOH verification.
           </Text>
         </Box>
-        <Button onClick={() => router.back()} variant="tertiary">
+        <Button onClick={() => router.push("/buylists")} variant="tertiary">
           Cancel
         </Button>
       </Box>
@@ -392,15 +501,17 @@ export default function NewBuylistPage() {
         >
           <Box
             display="grid"
-            __gridTemplateColumns="3fr 80px 120px 100px 60px"
-            gap={4}
+            __gridTemplateColumns="2.5fr 70px 100px 90px 90px 70px"
+            gap={3}
             padding={4}
             backgroundColor="default1"
+            alignItems="center"
           >
             <Text fontWeight="bold">Card</Text>
             <Text fontWeight="bold">Qty</Text>
             <Text fontWeight="bold">Condition</Text>
             <Text fontWeight="bold">Market $</Text>
+            <Text fontWeight="bold">Buy $</Text>
             <Box />
           </Box>
 
@@ -408,17 +519,32 @@ export default function NewBuylistPage() {
             <Box
               key={line.id}
               display="grid"
-              __gridTemplateColumns="3fr 80px 120px 100px 60px"
-              gap={4}
+              __gridTemplateColumns="2.5fr 70px 100px 90px 90px 70px"
+              gap={3}
               padding={4}
               borderTopWidth={1}
               borderTopStyle="solid"
               borderColor="default1"
+              alignItems="center"
             >
               <Text>{line.displayName}</Text>
-              <Text>{line.qty}</Text>
+              <Input
+                type="number"
+                min={1}
+                value={line.qty.toString()}
+                onChange={(e) => updateLineQty(line.id, parseInt(e.target.value) || 1)}
+                size="small"
+              />
               <Text>{line.condition}</Text>
               <Text>${line.marketPrice.toFixed(2)}</Text>
+              <Input
+                type="number"
+                min={0}
+                step={0.01}
+                value={line.buyPrice.toFixed(2)}
+                onChange={(e) => updateLineBuyPrice(line.id, parseFloat(e.target.value) || 0)}
+                size="small"
+              />
               <Button
                 onClick={() => removeLine(line.id)}
                 variant="tertiary"
@@ -432,20 +558,63 @@ export default function NewBuylistPage() {
           <Box
             display="flex"
             justifyContent="flex-end"
+            gap={6}
             padding={4}
             backgroundColor="default1"
           >
-            <Text fontWeight="bold">
-              Total Market Value: $
+            <Text>
+              Market Total: $
               {lines.reduce((sum, l) => sum + l.marketPrice * l.qty, 0).toFixed(2)}
             </Text>
+            <Text fontWeight="bold" color="success1">
+              Buy Total: $
+              {lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0).toFixed(2)}
+            </Text>
+          </Box>
+        </Box>
+      )}
+
+      {/* Payment Section - only show when items are added */}
+      {lines.length > 0 && (
+        <Box
+          padding={6}
+          borderRadius={4}
+          borderWidth={1}
+          borderStyle="solid"
+          borderColor="default1"
+          backgroundColor="success1"
+        >
+          <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
+            Payment
+          </Text>
+          <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4} alignItems="end">
+            <Box>
+              <Text as="p" size={5} fontWeight="bold" marginBottom={2}>
+                Total to Pay Customer
+              </Text>
+              <Text as="p" size={8} fontWeight="bold" color="success1">
+                ${lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0).toFixed(2)}
+              </Text>
+            </Box>
+            <Select
+              label="Payout Method"
+              value={payoutMethod}
+              onChange={(value) => setPayoutMethod(value as string)}
+              options={PAYOUT_METHODS}
+            />
+            <Input
+              label="Reference (optional)"
+              value={payoutReference}
+              onChange={(e) => setPayoutReference(e.target.value)}
+              placeholder="Check #, transaction ID, etc."
+            />
           </Box>
         </Box>
       )}
 
       {/* Actions */}
       <Box display="flex" justifyContent="flex-end" gap={4}>
-        <Button onClick={() => router.back()} variant="tertiary">
+        <Button onClick={() => router.push("/buylists")} variant="tertiary">
           Cancel
         </Button>
         <Button
@@ -453,7 +622,7 @@ export default function NewBuylistPage() {
           variant="primary"
           disabled={isSubmitting || lines.length === 0}
         >
-          {isSubmitting ? "Creating..." : "Create Buylist"}
+          {isSubmitting ? "Processing..." : "Complete & Pay Customer"}
         </Button>
       </Box>
     </Box>

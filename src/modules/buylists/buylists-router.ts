@@ -27,6 +27,7 @@ const buylistLineSchema = z.object({
   qty: z.number().int().min(1),
   condition: conditionEnum,
   marketPrice: z.number().min(0),
+  buyPrice: z.number().min(0).optional().nullable(), // Optional override for quoted price
   notes: z.string().optional().nullable(),
 });
 
@@ -60,18 +61,15 @@ const lineUpdateSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+// Payout method enum (must match Prisma schema)
+const payoutMethodEnum = z.enum(["CASH", "STORE_CREDIT", "CHECK", "BANK_TRANSFER", "PAYPAL", "OTHER"]);
+
 // Search schema
 const searchSchema = z.object({
   query: z.string().optional(),
   status: z.enum([
-    "DRAFT",
-    "QUOTED",
-    "SUBMITTED",
-    "PENDING_REVIEW",
-    "APPROVED",
-    "RECEIVED",
-    "PAID",
-    "REJECTED",
+    "PENDING_VERIFICATION",
+    "COMPLETED",
     "CANCELLED",
   ]).optional(),
   warehouseId: z.string().optional(),
@@ -80,6 +78,19 @@ const searchSchema = z.object({
   dateTo: z.string().datetime().optional(),
   limit: z.number().min(1).max(100).optional().default(50),
   offset: z.number().min(0).optional().default(0),
+});
+
+// Create and pay schema (simplified workflow)
+const createAndPaySchema = z.object({
+  saleorWarehouseId: z.string(),
+  customerName: z.string().optional().nullable(),
+  customerEmail: z.string().email().optional().nullable(),
+  customerPhone: z.string().optional().nullable(),
+  currency: z.string().length(3).default("USD"),
+  notes: z.string().optional().nullable(),
+  payoutMethod: payoutMethodEnum,
+  payoutReference: z.string().optional().nullable(), // Check #, transaction ID, etc.
+  lines: z.array(buylistLineSchema).min(1, "At least one line is required"),
 });
 
 /**
@@ -238,11 +249,24 @@ export const buylistsRouter = router({
 
     // Calculate prices for each line
     const linesWithPrices = input.lines.map((line, index) => {
-      const { quotedPrice, finalPrice } = calculateLinePrice(
-        line.marketPrice,
-        line.condition,
-        pricingPolicy
-      );
+      // Use buyPrice override if provided, otherwise calculate from policy
+      let quotedPrice: number;
+      let finalPrice: number;
+
+      if (line.buyPrice !== null && line.buyPrice !== undefined) {
+        // Use the provided buy price as both quoted and final
+        quotedPrice = line.buyPrice;
+        finalPrice = line.buyPrice;
+      } else {
+        // Calculate from pricing policy
+        const calculated = calculateLinePrice(
+          line.marketPrice,
+          line.condition,
+          pricingPolicy
+        );
+        quotedPrice = calculated.quotedPrice;
+        finalPrice = calculated.finalPrice;
+      }
 
       return {
         ...line,
@@ -266,7 +290,7 @@ export const buylistsRouter = router({
         installationId: ctx.installationId,
         buylistNumber,
         saleorWarehouseId: input.saleorWarehouseId,
-        status: "DRAFT",
+        status: "PENDING_VERIFICATION", // Note: Old workflow used DRAFT, now uses simplified workflow
         customerName: input.customerName ?? null,
         customerEmail: input.customerEmail ?? null,
         customerPhone: input.customerPhone ?? null,
@@ -303,7 +327,128 @@ export const buylistsRouter = router({
   }),
 
   /**
-   * Update a buylist (draft only)
+   * Create and pay buylist in one step (simplified face-to-face workflow)
+   * Creates buylist, records payout, sets status to PENDING_VERIFICATION
+   */
+  createAndPay: protectedClientProcedure.input(createAndPaySchema).mutation(async ({ ctx, input }) => {
+    // Generate buylist number
+    const buylistNumber = await generateBuylistNumber(ctx.prisma, ctx.installationId);
+
+    // Get default pricing policy
+    const pricingPolicy = await ctx.prisma.buylistPricingPolicy.findFirst({
+      where: {
+        installationId: ctx.installationId,
+        isDefault: true,
+        isActive: true,
+      },
+    });
+
+    // Calculate prices for each line
+    const linesWithPrices = input.lines.map((line, index) => {
+      let buyPrice: number;
+
+      if (line.buyPrice !== null && line.buyPrice !== undefined) {
+        buyPrice = line.buyPrice;
+      } else {
+        const calculated = calculateLinePrice(
+          line.marketPrice,
+          line.condition,
+          pricingPolicy
+        );
+        buyPrice = calculated.finalPrice;
+      }
+
+      return {
+        saleorVariantId: line.saleorVariantId,
+        saleorVariantSku: line.saleorVariantSku ?? null,
+        saleorVariantName: line.saleorVariantName ?? null,
+        qty: line.qty,
+        condition: line.condition,
+        marketPrice: new Decimal(line.marketPrice),
+        quotedPrice: new Decimal(buyPrice),
+        finalPrice: new Decimal(buyPrice),
+        currency: input.currency,
+        lineNumber: index + 1,
+        notes: line.notes ?? null,
+      };
+    });
+
+    // Calculate total payout amount
+    const totalAmount = linesWithPrices.reduce(
+      (sum, line) => sum.add(line.finalPrice.mul(line.qty)),
+      new Decimal(0)
+    );
+
+    const now = new Date();
+    const userId = getUserId(ctx);
+
+    // Create buylist with lines and payout in a transaction
+    const buylist = await ctx.prisma.$transaction(async (tx: any) => {
+      // Create buylist
+      const newBuylist = await tx.buylist.create({
+        data: {
+          installationId: ctx.installationId,
+          buylistNumber,
+          saleorWarehouseId: input.saleorWarehouseId,
+          status: "PENDING_VERIFICATION",
+          customerName: input.customerName ?? null,
+          customerEmail: input.customerEmail ?? null,
+          customerPhone: input.customerPhone ?? null,
+          currency: input.currency,
+          pricingPolicyId: pricingPolicy?.id ?? null,
+          totalQuotedAmount: totalAmount,
+          totalFinalAmount: totalAmount,
+          notes: input.notes ?? null,
+          payoutMethod: input.payoutMethod,
+          payoutReference: input.payoutReference ?? null,
+          paidAt: now,
+          paidBy: userId,
+          lines: {
+            create: linesWithPrices,
+          },
+        },
+        include: {
+          lines: true,
+        },
+      });
+
+      // Create payout record
+      await tx.buylistPayout.create({
+        data: {
+          buylistId: newBuylist.id,
+          method: input.payoutMethod,
+          status: "COMPLETED",
+          amount: totalAmount,
+          currency: input.currency,
+          reference: input.payoutReference ?? null,
+          processedAt: now,
+          processedBy: userId,
+        },
+      });
+
+      // Create audit event
+      await tx.buylistAuditEvent.create({
+        data: {
+          buylistId: newBuylist.id,
+          action: "CREATED_AND_PAID",
+          userId,
+          newState: {
+            buylistNumber,
+            lineCount: input.lines.length,
+            totalAmount: totalAmount.toString(),
+            payoutMethod: input.payoutMethod,
+          },
+        },
+      });
+
+      return newBuylist;
+    });
+
+    return buylist;
+  }),
+
+  /**
+   * Update a buylist (draft only) - DEPRECATED in simplified workflow
    */
   update: protectedClientProcedure
     .input(
@@ -327,10 +472,10 @@ export const buylistsRouter = router({
         });
       }
 
-      if (existing.status !== "DRAFT") {
+      if (existing.status !== "PENDING_VERIFICATION") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Only draft buylists can be edited",
+          message: "Only pending buylists can be edited",
         });
       }
 
@@ -381,19 +526,29 @@ export const buylistsRouter = router({
         });
       }
 
-      if (buylist.status !== "DRAFT") {
+      if (buylist.status !== "PENDING_VERIFICATION") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Only draft buylists can be modified",
+          message: "Only pending buylists can be modified",
         });
       }
 
-      // Calculate prices
-      const { quotedPrice, finalPrice } = calculateLinePrice(
-        input.line.marketPrice,
-        input.line.condition,
-        buylist.pricingPolicy
-      );
+      // Calculate prices - use buyPrice override if provided
+      let quotedPrice: number;
+      let finalPrice: number;
+
+      if (input.line.buyPrice !== null && input.line.buyPrice !== undefined) {
+        quotedPrice = input.line.buyPrice;
+        finalPrice = input.line.buyPrice;
+      } else {
+        const calculated = calculateLinePrice(
+          input.line.marketPrice,
+          input.line.condition,
+          buylist.pricingPolicy
+        );
+        quotedPrice = calculated.quotedPrice;
+        finalPrice = calculated.finalPrice;
+      }
 
       const nextLineNumber = (buylist.lines[0]?.lineNumber ?? 0) + 1;
 
@@ -455,10 +610,10 @@ export const buylistsRouter = router({
         });
       }
 
-      if (line.buylist.status !== "DRAFT") {
+      if (line.buylist.status !== "PENDING_VERIFICATION") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Only draft buylists can be modified",
+          message: "Only pending buylists can be modified",
         });
       }
 
@@ -519,10 +674,10 @@ export const buylistsRouter = router({
         });
       }
 
-      if (line.buylist.status !== "DRAFT") {
+      if (line.buylist.status !== "PENDING_VERIFICATION") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Only draft buylists can be modified",
+          message: "Only pending buylists can be modified",
         });
       }
 
@@ -560,10 +715,10 @@ export const buylistsRouter = router({
         });
       }
 
-      if (!["DRAFT", "QUOTED"].includes(buylist.status)) {
+      if (buylist.status !== "PENDING_VERIFICATION") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Can only generate quotes for draft or quoted buylists",
+          message: "Can only recalculate prices for pending buylists",
         });
       }
 
@@ -604,11 +759,9 @@ export const buylistsRouter = router({
       const updated = await ctx.prisma.buylist.update({
         where: { id: input.id },
         data: {
-          status: "QUOTED",
+          // Status stays PENDING_VERIFICATION (simplified workflow)
           totalQuotedAmount,
           totalFinalAmount: totalQuotedAmount,
-          quotedAt: new Date(),
-          quotedBy: getUserId(ctx),
         },
         include: {
           lines: true,
@@ -651,31 +804,14 @@ export const buylistsRouter = router({
         });
       }
 
-      if (buylist.status !== "QUOTED") {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "Buylist must be quoted before submission",
-        });
-      }
-
-      const updated = await ctx.prisma.buylist.update({
-        where: { id: input.id },
-        data: {
-          status: "PENDING_REVIEW",
-          submittedAt: new Date(),
-        },
+      /*
+       * In the simplified workflow, this endpoint is deprecated.
+       * Buylists go directly to PENDING_VERIFICATION via createAndPay.
+       */
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "This endpoint is deprecated. Use createAndPay for the new workflow.",
       });
-
-      // Audit event
-      await ctx.prisma.buylistAuditEvent.create({
-        data: {
-          buylistId: input.id,
-          action: "SUBMITTED",
-          userId: getUserId(ctx),
-        },
-      });
-
-      return updated;
     }),
 
   /**
@@ -703,10 +839,10 @@ export const buylistsRouter = router({
         });
       }
 
-      if (["RECEIVED", "PAID"].includes(buylist.status)) {
+      if (buylist.status === "COMPLETED") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Cannot cancel received or paid buylists",
+          message: "Cannot cancel completed buylists",
         });
       }
 
@@ -746,7 +882,7 @@ export const buylistsRouter = router({
           createdAt: {
             gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
           },
-          status: { in: ["RECEIVED", "PAID"] },
+          status: "COMPLETED",
         },
         _sum: {
           totalFinalAmount: true,
