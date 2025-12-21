@@ -1,3 +1,5 @@
+import { PrismaClient } from "@prisma/client";
+import { Decimal } from "decimal.js";
 import { Client, gql } from "urql";
 
 import { createLogger } from "./logger";
@@ -576,4 +578,211 @@ export class SaleorClient {
  */
 export function createSaleorClient(client: Client, channel?: string): SaleorClient {
   return new SaleorClient(client, channel);
+}
+
+/**
+ * Price Snapshot Service
+ *
+ * Fetches and caches market prices from SellPriceSnapshot table.
+ * Falls back to Saleor prices if no snapshot exists.
+ */
+export class PriceSnapshotService {
+  constructor(
+    private prisma: PrismaClient,
+    private installationId: string,
+    private channelId: string
+  ) {}
+
+  /**
+   * Get the latest market price for a variant from snapshots
+   * Returns null if no snapshot exists (caller should use Saleor price)
+   */
+  async getLatestPrice(variantId: string): Promise<{ price: number; source: string } | null> {
+    const snapshot = await this.prisma.sellPriceSnapshot.findFirst({
+      where: {
+        installationId: this.installationId,
+        saleorVariantId: variantId,
+        saleorChannelId: this.channelId,
+      },
+      orderBy: { snapshotAt: "desc" },
+    });
+
+    if (!snapshot) {
+      return null;
+    }
+
+    return {
+      price: snapshot.currentPrice.toNumber(),
+      source: snapshot.source,
+    };
+  }
+
+  /**
+   * Get latest prices for multiple variants
+   * Returns a map of variantId -> price data
+   */
+  async getLatestPrices(
+    variantIds: string[]
+  ): Promise<Map<string, { price: number; source: string }>> {
+    if (variantIds.length === 0) {
+      return new Map();
+    }
+
+    // Get latest snapshot for each variant using a subquery approach
+    const snapshots = await this.prisma.$queryRaw<
+      Array<{
+        saleorVariantId: string;
+        currentPrice: Decimal;
+        source: string;
+      }>
+    >`
+      SELECT DISTINCT ON ("saleorVariantId")
+        "saleorVariantId",
+        "currentPrice",
+        "source"
+      FROM "SellPriceSnapshot"
+      WHERE "installationId" = ${this.installationId}
+        AND "saleorChannelId" = ${this.channelId}
+        AND "saleorVariantId" = ANY(${variantIds})
+      ORDER BY "saleorVariantId", "snapshotAt" DESC
+    `;
+
+    const priceMap = new Map<string, { price: number; source: string }>();
+
+    for (const snapshot of snapshots) {
+      priceMap.set(snapshot.saleorVariantId, {
+        price: Number(snapshot.currentPrice),
+        source: snapshot.source,
+      });
+    }
+
+    return priceMap;
+  }
+
+  /**
+   * Create a price snapshot for a variant
+   * Called when fetching from Saleor to bootstrap snapshot data
+   */
+  async createSnapshot(
+    variantId: string,
+    price: number,
+    currency: string,
+    sourceUrl?: string
+  ): Promise<void> {
+    await this.prisma.sellPriceSnapshot.create({
+      data: {
+        installationId: this.installationId,
+        saleorVariantId: variantId,
+        saleorChannelId: this.channelId,
+        currentPrice: new Decimal(price),
+        currency,
+        source: "saleor",
+        sourceUrl,
+      },
+    });
+
+    logger.debug("Created price snapshot", { variantId, price });
+  }
+}
+
+/**
+ * Enhanced SaleorClient that uses price snapshots
+ */
+export class EnhancedSaleorClient extends SaleorClient {
+  private priceService: PriceSnapshotService | null = null;
+
+  /**
+   * Attach a price snapshot service for enhanced pricing
+   */
+  withPriceSnapshots(
+    prisma: PrismaClient,
+    installationId: string,
+    channelId: string
+  ): EnhancedSaleorClient {
+    this.priceService = new PriceSnapshotService(prisma, installationId, channelId);
+    return this;
+  }
+
+  /**
+   * Search cards with enhanced pricing from snapshots
+   */
+  override async searchCards(query: string, first: number = 20): Promise<CardSearchResult[]> {
+    const results = await super.searchCards(query, first);
+
+    if (!this.priceService || results.length === 0) {
+      return results;
+    }
+
+    // Fetch snapshot prices for all results
+    const variantIds = results.map((r) => r.variantId);
+    const snapshotPrices = await this.priceService.getLatestPrices(variantIds);
+
+    // Enhance results with snapshot prices where available
+    return results.map((result) => {
+      const snapshotPrice = snapshotPrices.get(result.variantId);
+
+      if (snapshotPrice) {
+        return {
+          ...result,
+          marketPrice: snapshotPrice.price,
+          // Keep original currency from Saleor
+        };
+      }
+
+      // No snapshot - create one for future use (async, don't await)
+      if (result.marketPrice > 0) {
+        this.priceService
+          ?.createSnapshot(result.variantId, result.marketPrice, result.currency)
+          .catch((err) => logger.warn("Failed to create snapshot", { error: err.message }));
+      }
+
+      return result;
+    });
+  }
+
+  /**
+   * Get variant by ID with enhanced pricing
+   */
+  override async getVariantById(id: string): Promise<CardSearchResult | null> {
+    const result = await super.getVariantById(id);
+
+    if (!result || !this.priceService) {
+      return result;
+    }
+
+    // Check for snapshot price
+    const snapshotPrice = await this.priceService.getLatestPrice(id);
+
+    if (snapshotPrice) {
+      return {
+        ...result,
+        marketPrice: snapshotPrice.price,
+      };
+    }
+
+    // Create snapshot for future use
+    if (result.marketPrice > 0) {
+      await this.priceService
+        .createSnapshot(result.variantId, result.marketPrice, result.currency)
+        .catch((err) => logger.warn("Failed to create snapshot", { error: err.message }));
+    }
+
+    return result;
+  }
+}
+
+/**
+ * Create an enhanced SaleorClient with price snapshot support
+ */
+export function createEnhancedSaleorClient(
+  client: Client,
+  prisma: PrismaClient,
+  installationId: string,
+  channel: string = "webstore"
+): EnhancedSaleorClient {
+  return new EnhancedSaleorClient(client, channel).withPriceSnapshots(
+    prisma,
+    installationId,
+    channel
+  );
 }

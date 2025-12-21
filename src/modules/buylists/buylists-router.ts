@@ -4,10 +4,13 @@ import { Decimal } from "decimal.js";
 import { z } from "zod";
 
 import { extractUserFromToken } from "@/lib/jwt-utils";
-import { createSaleorClient } from "@/lib/saleor-client";
+import { createLogger } from "@/lib/logger";
+import { createEnhancedSaleorClient, createSaleorClient } from "@/lib/saleor-client";
 import { DEFAULT_CONDITION_MULTIPLIERS } from "@/modules/pricing";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+
+const logger = createLogger("buylists-router");
 
 /**
  * Get a user-friendly identifier from context
@@ -945,7 +948,13 @@ export const buylistsRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      const saleorClient = createSaleorClient(ctx.apiClient);
+      // Use enhanced client to get prices from snapshots when available
+      const saleorClient = createEnhancedSaleorClient(
+        ctx.apiClient,
+        ctx.prisma,
+        ctx.installationId,
+        "webstore"
+      );
 
       const results = await saleorClient.searchCards(input.query, input.limit);
 
@@ -958,7 +967,13 @@ export const buylistsRouter = router({
   getCard: protectedClientProcedure
     .input(z.object({ variantId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const saleorClient = createSaleorClient(ctx.apiClient);
+      // Use enhanced client to get prices from snapshots when available
+      const saleorClient = createEnhancedSaleorClient(
+        ctx.apiClient,
+        ctx.prisma,
+        ctx.installationId,
+        "webstore"
+      );
 
       const card = await saleorClient.getVariantById(input.variantId);
 
