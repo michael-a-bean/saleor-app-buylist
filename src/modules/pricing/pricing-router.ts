@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+import { ruleEngine, type ProductAttributes } from "./rule-engine";
+import { rulesRouter } from "./rules-router";
 
 // Condition multiplier schema
 const conditionMultipliersSchema = z.object({
@@ -374,6 +376,7 @@ export const pricingRouter = router({
 
   /**
    * Calculate buy price for a card based on a policy
+   * Supports dynamic pricing rules attached to the policy
    */
   calculatePrice: protectedClientProcedure
     .input(
@@ -382,16 +385,35 @@ export const pricingRouter = router({
         marketPrice: z.number().min(0),
         condition: z.enum(["NM", "LP", "MP", "HP", "DMG"]),
         categoryId: z.string().optional(),
+        // Optional product attributes for rule evaluation
+        variantId: z.string().optional(),
+        productId: z.string().optional(),
+        attributes: z.object({
+          setCode: z.string().optional(),
+          setName: z.string().optional(),
+          rarity: z.string().optional(),
+          finish: z.string().optional(),
+          cardType: z.string().optional(),
+          formatLegality: z.record(z.string(), z.boolean()).optional(),
+        }).optional(),
+        // Optional inventory data for rule evaluation
+        qtyOnHand: z.number().int().min(0).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
-      // Get policy (use specified or default)
+      // Get policy with rules (use specified or default)
       let policy;
       if (input.policyId) {
         policy = await ctx.prisma.buylistPricingPolicy.findFirst({
           where: {
             id: input.policyId,
             installationId: ctx.installationId,
+          },
+          include: {
+            rules: {
+              where: { isActive: true },
+              orderBy: { priority: "asc" },
+            },
           },
         });
       } else {
@@ -400,6 +422,12 @@ export const pricingRouter = router({
             installationId: ctx.installationId,
             isDefault: true,
             isActive: true,
+          },
+          include: {
+            rules: {
+              where: { isActive: true },
+              orderBy: { priority: "asc" },
+            },
           },
         });
       }
@@ -411,108 +439,42 @@ export const pricingRouter = router({
         });
       }
 
-      // Calculate base offer
-      let baseOffer: number;
+      // Build product attributes for rule evaluation
+      const productAttributes: ProductAttributes = {
+        variantId: input.variantId ?? "",
+        productId: input.productId ?? "",
+        categoryId: input.categoryId,
+        ...input.attributes,
+      };
 
-      switch (policy.policyType) {
-        case "PERCENTAGE":
-          if (!policy.basePercentage) {
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Policy missing base percentage",
-            });
-          }
-          baseOffer = input.marketPrice * (policy.basePercentage.toNumber() / 100);
-          break;
-
-        case "FIXED_DISCOUNT":
-          if (!policy.basePercentage) {
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Policy missing discount amount",
-            });
-          }
-          baseOffer = Math.max(0, input.marketPrice - policy.basePercentage.toNumber());
-          break;
-
-        case "TIERED": {
-          const rules = policy.tieredRules as Array<{
-            minValue: number;
-            maxValue: number | null;
-            percentage: number;
-          }> | null;
-          if (!rules || rules.length === 0) {
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Policy missing tiered rules",
-            });
-          }
-
-          // Find matching tier
-          const tier = rules.find(
-            (r) => input.marketPrice >= r.minValue && (r.maxValue === null || input.marketPrice < r.maxValue)
-          );
-
-          if (!tier) {
-            // Use lowest tier if no match (for values below minimum)
-            const lowestTier = rules.reduce((min, r) => (r.minValue < min.minValue ? r : min), rules[0]);
-            baseOffer = input.marketPrice * (lowestTier.percentage / 100);
-          } else {
-            baseOffer = input.marketPrice * (tier.percentage / 100);
-          }
-          break;
-        }
-
-        case "CUSTOM":
-          /*
-           * Custom policies would need external evaluation.
-           * For now, fall back to a simple 50% offer.
-           */
-          baseOffer = input.marketPrice * 0.5;
-          break;
-
-        default:
-          baseOffer = input.marketPrice * 0.5;
-      }
-
-      // Apply condition multiplier
-      const multipliers = (policy.conditionMultipliers as Record<string, number>) ?? DEFAULT_CONDITION_MULTIPLIERS;
-      const conditionMultiplier = multipliers[input.condition] ?? 1.0;
-      let finalOffer = baseOffer * conditionMultiplier;
-
-      // Apply category override if present
-      if (input.categoryId && policy.categoryOverrides) {
-        const overrides = policy.categoryOverrides as Record<string, number>;
-        const categoryMultiplier = overrides[input.categoryId];
-        if (categoryMultiplier !== undefined) {
-          finalOffer = finalOffer * (categoryMultiplier / 100);
-        }
-      }
-
-      // Apply min/max constraints
-      if (policy.minimumPrice && finalOffer < policy.minimumPrice.toNumber()) {
-        finalOffer = policy.minimumPrice.toNumber();
-      }
-      if (policy.maximumPrice && finalOffer > policy.maximumPrice.toNumber()) {
-        finalOffer = policy.maximumPrice.toNumber();
-      }
-
-      // Round to 2 decimal places
-      finalOffer = Math.round(finalOffer * 100) / 100;
-
-      return {
-        policyId: policy.id,
-        policyName: policy.name,
+      // Use the rule engine to calculate the price
+      const result = ruleEngine.calculatePrice({
+        policy,
+        rules: policy.rules,
         marketPrice: input.marketPrice,
         condition: input.condition,
-        baseOffer: Math.round(baseOffer * 100) / 100,
-        conditionMultiplier,
-        finalOffer,
+        attributes: productAttributes,
+        inventory: input.qtyOnHand !== undefined ? { qtyOnHand: input.qtyOnHand } : undefined,
+        categoryId: input.categoryId,
+      });
+
+      return {
+        policyId: result.policyId,
+        policyName: result.policyName,
+        marketPrice: result.marketPrice,
+        condition: result.condition,
+        baseOffer: Math.round(result.baseOffer * 100) / 100,
+        conditionMultiplier: result.conditionMultiplier,
+        finalOffer: result.finalOffer,
+        // New: rule application details
+        appliedRules: result.appliedRules,
+        constraintsApplied: result.constraintsApplied,
       };
     }),
 
   /**
    * Bulk calculate prices for multiple items
+   * Supports dynamic pricing rules attached to the policy
    */
   calculatePrices: protectedClientProcedure
     .input(
@@ -521,21 +483,39 @@ export const pricingRouter = router({
         items: z.array(
           z.object({
             variantId: z.string(),
+            productId: z.string().optional(),
             marketPrice: z.number().min(0),
             condition: z.enum(["NM", "LP", "MP", "HP", "DMG"]),
             categoryId: z.string().optional(),
+            // Optional product attributes for rule evaluation
+            attributes: z.object({
+              setCode: z.string().optional(),
+              setName: z.string().optional(),
+              rarity: z.string().optional(),
+              finish: z.string().optional(),
+              cardType: z.string().optional(),
+              formatLegality: z.record(z.string(), z.boolean()).optional(),
+            }).optional(),
+            // Optional inventory data
+            qtyOnHand: z.number().int().min(0).optional(),
           })
         ),
       })
     )
     .query(async ({ ctx, input }) => {
-      // Get policy
+      // Get policy with rules
       let policy;
       if (input.policyId) {
         policy = await ctx.prisma.buylistPricingPolicy.findFirst({
           where: {
             id: input.policyId,
             installationId: ctx.installationId,
+          },
+          include: {
+            rules: {
+              where: { isActive: true },
+              orderBy: { priority: "asc" },
+            },
           },
         });
       } else {
@@ -544,6 +524,12 @@ export const pricingRouter = router({
             installationId: ctx.installationId,
             isDefault: true,
             isActive: true,
+          },
+          include: {
+            rules: {
+              where: { isActive: true },
+              orderBy: { priority: "asc" },
+            },
           },
         });
       }
@@ -555,59 +541,33 @@ export const pricingRouter = router({
         });
       }
 
-      const multipliers = (policy.conditionMultipliers as Record<string, number>) ?? DEFAULT_CONDITION_MULTIPLIERS;
-
+      // Calculate prices for each item using the rule engine
       const results = input.items.map((item) => {
-        let baseOffer: number;
+        // Build product attributes for rule evaluation
+        const productAttributes: ProductAttributes = {
+          variantId: item.variantId,
+          productId: item.productId ?? "",
+          categoryId: item.categoryId,
+          ...item.attributes,
+        };
 
-        switch (policy.policyType) {
-          case "PERCENTAGE":
-            baseOffer = item.marketPrice * ((policy.basePercentage?.toNumber() ?? 50) / 100);
-            break;
-          case "FIXED_DISCOUNT":
-            baseOffer = Math.max(0, item.marketPrice - (policy.basePercentage?.toNumber() ?? 0));
-            break;
-          case "TIERED": {
-            const rules = policy.tieredRules as Array<{
-              minValue: number;
-              maxValue: number | null;
-              percentage: number;
-            }> | null;
-            const tier = rules?.find(
-              (r) => item.marketPrice >= r.minValue && (r.maxValue === null || item.marketPrice < r.maxValue)
-            );
-            baseOffer = item.marketPrice * ((tier?.percentage ?? 50) / 100);
-            break;
-          }
-          default:
-            baseOffer = item.marketPrice * 0.5;
-        }
-
-        const conditionMultiplier = multipliers[item.condition] ?? 1.0;
-        let finalOffer = baseOffer * conditionMultiplier;
-
-        // Apply category override
-        if (item.categoryId && policy.categoryOverrides) {
-          const overrides = policy.categoryOverrides as Record<string, number>;
-          const categoryMultiplier = overrides[item.categoryId];
-          if (categoryMultiplier !== undefined) {
-            finalOffer = finalOffer * (categoryMultiplier / 100);
-          }
-        }
-
-        // Apply constraints
-        if (policy.minimumPrice && finalOffer < policy.minimumPrice.toNumber()) {
-          finalOffer = policy.minimumPrice.toNumber();
-        }
-        if (policy.maximumPrice && finalOffer > policy.maximumPrice.toNumber()) {
-          finalOffer = policy.maximumPrice.toNumber();
-        }
+        // Use the rule engine
+        const result = ruleEngine.calculatePrice({
+          policy,
+          rules: policy.rules,
+          marketPrice: item.marketPrice,
+          condition: item.condition,
+          attributes: productAttributes,
+          inventory: item.qtyOnHand !== undefined ? { qtyOnHand: item.qtyOnHand } : undefined,
+          categoryId: item.categoryId,
+        });
 
         return {
           variantId: item.variantId,
           marketPrice: item.marketPrice,
           condition: item.condition,
-          finalOffer: Math.round(finalOffer * 100) / 100,
+          finalOffer: result.finalOffer,
+          appliedRules: result.appliedRules,
         };
       });
 
@@ -617,6 +577,12 @@ export const pricingRouter = router({
         results,
       };
     }),
+
+  /**
+   * Pricing rules sub-router
+   * Provides endpoints for managing dynamic pricing rules
+   */
+  rules: rulesRouter,
 });
 
 /**
