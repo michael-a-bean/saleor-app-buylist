@@ -312,6 +312,43 @@ function variantToCardResult(variant: SaleorVariant): CardSearchResult {
 }
 
 /**
+ * Dedupe card results by unique card identity (product + set + collector number)
+ * Returns one result per unique card, preferring NM variants for pricing
+ */
+function dedupeCardResults(results: CardSearchResult[]): CardSearchResult[] {
+  const cardMap = new Map<string, CardSearchResult>();
+
+  for (const result of results) {
+    // Create a unique key for each card printing
+    const key = `${result.productName}|${result.setCode ?? ""}|${result.collectorNumber ?? ""}`;
+
+    const existing = cardMap.get(key);
+
+    if (!existing) {
+      cardMap.set(key, result);
+    } else {
+      /*
+       * Prefer NM variant for the best market price reference.
+       * Check if current result is NM (variant name often contains condition).
+       */
+      const isCurrentNm = result.variantName.toUpperCase().includes("NM") ||
+                          result.variantName.toUpperCase().includes("NEAR MINT");
+      const isExistingNm = existing.variantName.toUpperCase().includes("NM") ||
+                           existing.variantName.toUpperCase().includes("NEAR MINT");
+
+      if (isCurrentNm && !isExistingNm) {
+        cardMap.set(key, result);
+      } else if (!isCurrentNm && !isExistingNm && result.marketPrice > existing.marketPrice) {
+        // If neither is NM, prefer higher price (likely NM equivalent)
+        cardMap.set(key, result);
+      }
+    }
+  }
+
+  return Array.from(cardMap.values());
+}
+
+/**
  * Saleor API client helper functions for buylist app
  */
 export class SaleorClient {
@@ -401,11 +438,14 @@ export class SaleorClient {
       });
     }
 
-    const results = variants.slice(0, first).map(variantToCardResult);
+    const results = variants.map(variantToCardResult);
 
-    logger.debug("Found cards", { count: results.length });
+    // Dedupe to show one result per unique card (condition is selected separately)
+    const dedupedResults = dedupeCardResults(results).slice(0, first);
 
-    return results;
+    logger.debug("Found cards", { count: dedupedResults.length, beforeDedupe: results.length });
+
+    return dedupedResults;
   }
 
   /**
@@ -587,11 +627,15 @@ export function createSaleorClient(client: Client, channel?: string): SaleorClie
  * Falls back to Saleor prices if no snapshot exists.
  */
 export class PriceSnapshotService {
-  constructor(
-    private prisma: PrismaClient,
-    private installationId: string,
-    private channelId: string
-  ) {}
+  private prisma: PrismaClient;
+  private installationId: string;
+  private channelId: string;
+
+  constructor(prisma: PrismaClient, installationId: string, channelId: string) {
+    this.prisma = prisma;
+    this.installationId = installationId;
+    this.channelId = channelId;
+  }
 
   /**
    * Get the latest market price for a variant from snapshots
@@ -663,25 +707,25 @@ export class PriceSnapshotService {
    * Create a price snapshot for a variant
    * Called when fetching from Saleor to bootstrap snapshot data
    */
-  async createSnapshot(
-    variantId: string,
-    price: number,
-    currency: string,
-    sourceUrl?: string
-  ): Promise<void> {
+  async createSnapshot(options: {
+    variantId: string;
+    price: number;
+    currency: string;
+    sourceUrl?: string;
+  }): Promise<void> {
     await this.prisma.sellPriceSnapshot.create({
       data: {
         installationId: this.installationId,
-        saleorVariantId: variantId,
+        saleorVariantId: options.variantId,
         saleorChannelId: this.channelId,
-        currentPrice: new Decimal(price),
-        currency,
+        currentPrice: new Decimal(options.price),
+        currency: options.currency,
         source: "saleor",
-        sourceUrl,
+        sourceUrl: options.sourceUrl,
       },
     });
 
-    logger.debug("Created price snapshot", { variantId, price });
+    logger.debug("Created price snapshot", { variantId: options.variantId, price: options.price });
   }
 }
 
@@ -732,7 +776,7 @@ export class EnhancedSaleorClient extends SaleorClient {
       // No snapshot - create one for future use (async, don't await)
       if (result.marketPrice > 0) {
         this.priceService
-          ?.createSnapshot(result.variantId, result.marketPrice, result.currency)
+          ?.createSnapshot({ variantId: result.variantId, price: result.marketPrice, currency: result.currency })
           .catch((err) => logger.warn("Failed to create snapshot", { error: err.message }));
       }
 
@@ -763,7 +807,7 @@ export class EnhancedSaleorClient extends SaleorClient {
     // Create snapshot for future use
     if (result.marketPrice > 0) {
       await this.priceService
-        .createSnapshot(result.variantId, result.marketPrice, result.currency)
+        .createSnapshot({ variantId: result.variantId, price: result.marketPrice, currency: result.currency })
         .catch((err) => logger.warn("Failed to create snapshot", { error: err.message }));
     }
 
@@ -776,13 +820,13 @@ export class EnhancedSaleorClient extends SaleorClient {
  */
 export function createEnhancedSaleorClient(
   client: Client,
-  prisma: PrismaClient,
-  installationId: string,
-  channel: string = "webstore"
+  options: { prisma: PrismaClient; installationId: string; channel?: string }
 ): EnhancedSaleorClient {
+  const channel = options.channel ?? "webstore";
+
   return new EnhancedSaleorClient(client, channel).withPriceSnapshots(
-    prisma,
-    installationId,
+    options.prisma,
+    options.installationId,
     channel
   );
 }

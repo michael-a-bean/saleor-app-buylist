@@ -5,7 +5,7 @@
  * Ensures duplicate submissions return the existing buylist instead of creating duplicates.
  */
 import { Decimal } from "decimal.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // Mock types matching the schema
 interface MockBuylist {
@@ -117,7 +117,7 @@ describe("Buylist createAndPay Idempotency", () => {
     });
 
     it("should create new buylist when no matching idempotency key exists", () => {
-      const idempotencyKey = "new-unique-key-12345";
+      const _idempotencyKey = "new-unique-key-12345";
       const existingPayout = null; // No existing payout with this key
 
       // Should proceed with creation
@@ -201,7 +201,7 @@ describe("Buylist createAndPay Idempotency", () => {
 
   describe("Concurrent Request Handling", () => {
     it("should handle race conditions with unique constraint", async () => {
-      const idempotencyKey = "concurrent-key-12345";
+      const _idempotencyKey = "concurrent-key-12345";
 
       // Simulate two concurrent requests
       let firstInsertSucceeded = false;
@@ -211,7 +211,7 @@ describe("Buylist createAndPay Idempotency", () => {
       try {
         // Simulated insert
         firstInsertSucceeded = true;
-      } catch (error) {
+      } catch (_error) {
         firstInsertSucceeded = false;
       }
 
@@ -233,7 +233,7 @@ describe("Buylist createAndPay Idempotency", () => {
     });
 
     it("should return existing buylist on unique constraint violation", async () => {
-      const idempotencyKey = "existing-key-12345";
+      const _idempotencyKey = "existing-key-12345";
       const existingBuylist: MockBuylist = {
         id: "buylist-existing",
         buylistNumber: "BL-20250120-0001",

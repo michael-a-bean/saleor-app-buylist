@@ -949,12 +949,11 @@ export const buylistsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       // Use enhanced client to get prices from snapshots when available
-      const saleorClient = createEnhancedSaleorClient(
-        ctx.apiClient,
-        ctx.prisma,
-        ctx.installationId,
-        "webstore"
-      );
+      const saleorClient = createEnhancedSaleorClient(ctx.apiClient, {
+        prisma: ctx.prisma,
+        installationId: ctx.installationId,
+        channel: "webstore",
+      });
 
       const results = await saleorClient.searchCards(input.query, input.limit);
 
@@ -968,12 +967,11 @@ export const buylistsRouter = router({
     .input(z.object({ variantId: z.string() }))
     .query(async ({ ctx, input }) => {
       // Use enhanced client to get prices from snapshots when available
-      const saleorClient = createEnhancedSaleorClient(
-        ctx.apiClient,
-        ctx.prisma,
-        ctx.installationId,
-        "webstore"
-      );
+      const saleorClient = createEnhancedSaleorClient(ctx.apiClient, {
+        prisma: ctx.prisma,
+        installationId: ctx.installationId,
+        channel: "webstore",
+      });
 
       const card = await saleorClient.getVariantById(input.variantId);
 
