@@ -1,5 +1,6 @@
 import { Box, Button, Input, Select, Skeleton, Text } from "@saleor/macaw-ui";
-import { useState } from "react";
+import Link from "next/link";
+import { useRef, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 
@@ -33,6 +34,7 @@ export default function PricingPoliciesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<PolicyForm>(DEFAULT_FORM);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const policiesQuery = trpcClient.pricing.list.useQuery();
   const utils = trpcClient.useUtils();
@@ -75,15 +77,23 @@ export default function PricingPoliciesPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleEdit = (policy: any) => {
     setEditingId(policy.id);
+    // basePercentage comes as string/number from API (serialized Decimal), not a Decimal object
+    const basePercentage = policy.basePercentage != null
+      ? Number(policy.basePercentage)
+      : 50;
     setForm({
       name: policy.name,
       description: policy.description || "",
       policyType: policy.policyType,
-      basePercentage: policy.basePercentage?.toNumber() ?? 50,
+      basePercentage,
       isDefault: policy.isDefault,
       isActive: policy.isActive,
     });
     setShowForm(true);
+    // Scroll to form after state update
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   };
 
   const handleSubmit = () => {
@@ -139,6 +149,7 @@ export default function PricingPoliciesPage() {
       {/* Create/Edit Form */}
       {showForm && (
         <Box
+          ref={formRef}
           padding={6}
           borderRadius={4}
           borderWidth={1}
@@ -305,9 +316,16 @@ export default function PricingPoliciesPage() {
                 </Text>
                 <Text size={1} color="default2">
                   Used by {policy._count.buylists} buylist(s)
+                  {" | "}
+                  {policy._count.rules ?? 0} rule(s)
                 </Text>
               </Box>
               <Box display="flex" gap={2}>
+                <Link href={`/pricing/rules?policyId=${policy.id}`}>
+                  <Button variant="secondary" size="small">
+                    Manage Rules
+                  </Button>
+                </Link>
                 {!policy.isDefault && policy.isActive && (
                   <Button
                     onClick={() => setDefaultMutation.mutate({ id: policy.id })}

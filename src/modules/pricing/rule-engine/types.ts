@@ -297,18 +297,103 @@ export const SUPPORTED_OPERATORS: Record<ConditionType, ComparisonOperator[]> = 
 // ============================================================================
 
 /**
- * Create a time context from a Date object
+ * Options for creating a time context
  */
-export function createTimeContext(date: Date = new Date()): TimeContext {
+export interface TimeContextOptions {
+  /**
+   * IANA timezone name (e.g., "America/New_York", "Europe/London")
+   * If not provided, uses local system timezone
+   */
+  timezone?: string;
+}
+
+/**
+ * Create a time context from a Date object
+ *
+ * @param date - The date to create context from (default: now)
+ * @param options - Options including timezone
+ *
+ * Timezone handling:
+ * - If timezone is provided, the date/time fields reflect that timezone
+ * - If not provided, uses local system timezone
+ * - The `now` field always contains the original Date object (UTC)
+ */
+export function createTimeContext(
+  date: Date = new Date(),
+  options: TimeContextOptions = {}
+): TimeContext {
+  const { timezone } = options;
+
+  // Get date parts in the specified timezone or local
+  let year: number;
+  let month: number;
+  let dayOfMonth: number;
+  let dayOfWeek: number;
+  let hour: number;
+  let minute: number;
+  let dateStr: string;
+
+  if (timezone) {
+    try {
+      // Use Intl.DateTimeFormat to get timezone-aware parts
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+      const parts = formatter.formatToParts(date);
+      const partMap = new Map(parts.map((p) => [p.type, p.value]));
+
+      year = parseInt(partMap.get("year") ?? "0", 10);
+      month = parseInt(partMap.get("month") ?? "0", 10);
+      dayOfMonth = parseInt(partMap.get("day") ?? "0", 10);
+      hour = parseInt(partMap.get("hour") ?? "0", 10);
+      minute = parseInt(partMap.get("minute") ?? "0", 10);
+
+      // Map weekday abbreviation to number
+      const weekdayMap: Record<string, number> = {
+        Sun: 0,
+        Mon: 1,
+        Tue: 2,
+        Wed: 3,
+        Thu: 4,
+        Fri: 5,
+        Sat: 6,
+      };
+      dayOfWeek = weekdayMap[partMap.get("weekday") ?? "Sun"] ?? 0;
+
+      // Format date string as YYYY-MM-DD
+      dateStr = `${year}-${String(month).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
+    } catch {
+      // Fallback to local time if timezone is invalid
+      return createTimeContext(date);
+    }
+  } else {
+    // Local timezone
+    year = date.getFullYear();
+    month = date.getMonth() + 1;
+    dayOfMonth = date.getDate();
+    dayOfWeek = date.getDay();
+    hour = date.getHours();
+    minute = date.getMinutes();
+    dateStr = date.toISOString().split("T")[0];
+  }
+
   return {
     now: date,
-    date: date.toISOString().split("T")[0],
-    year: date.getFullYear(),
-    month: date.getMonth() + 1, // 1-12
-    dayOfMonth: date.getDate(),
-    dayOfWeek: date.getDay(), // 0-6
-    hour: date.getHours(),
-    minute: date.getMinutes(),
+    date: dateStr,
+    year,
+    month,
+    dayOfMonth,
+    dayOfWeek,
+    hour,
+    minute,
   };
 }
 

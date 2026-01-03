@@ -192,14 +192,22 @@ export class ConditionEvaluator {
     conditionValue: ConditionValue
   ): boolean {
     // Handle null/undefined field values
+    // When a field is missing or null, most comparisons should fail except:
+    // - NOT_EQUALS: null != "value" is true, null != null is false
+    // - NOT_IN: null is not in any list, so always true
+    // - IS_NULL/IS_NOT_NULL: if we add these operators in the future
     if (fieldValue === null || fieldValue === undefined) {
-      // Only NOT_EQUALS and NOT_IN can match when field is null/undefined
       if (operator === "NOT_EQUALS") {
+        // null != "value" → true (field is missing, so it doesn't equal the value)
+        // null != null → false (null equals null)
         return conditionValue !== null && conditionValue !== undefined;
       }
       if (operator === "NOT_IN") {
-        return true; // null is not in any list
+        // A missing/null field is not in any list
+        return true;
       }
+      // For EQUALS, GREATER_THAN, LESS_THAN, IN, BETWEEN, CONTAINS:
+      // A null/missing field cannot satisfy these conditions
       return false;
     }
 

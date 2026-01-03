@@ -3,6 +3,10 @@ import { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
+  eslint: {
+    // Skip ESLint during builds - run separately in CI
+    ignoreDuringBuilds: true,
+  },
   transpilePackages: [
     "@saleor/apps-logger",
     "@saleor/apps-otel",

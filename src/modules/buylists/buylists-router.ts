@@ -3,10 +3,12 @@ import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 
+import type { BuylistPricingPolicy, PricingRule as PrismaPricingRule } from "@prisma/client";
+
 import { extractUserFromToken } from "@/lib/jwt-utils";
 import { createLogger } from "@/lib/logger";
 import { createEnhancedSaleorClient, createSaleorClient } from "@/lib/saleor-client";
-import { DEFAULT_CONDITION_MULTIPLIERS } from "@/modules/pricing";
+import { ruleEngine } from "@/modules/pricing/rule-engine";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
 
@@ -232,13 +234,19 @@ export const buylistsRouter = router({
     // Generate buylist number
     const buylistNumber = await generateBuylistNumber(ctx.prisma, ctx.installationId);
 
-    // Get pricing policy (use specified or default)
-    let pricingPolicy;
+    // Get pricing policy with rules (use specified or default)
+    let pricingPolicy: PolicyWithRules | null;
     if (input.pricingPolicyId) {
       pricingPolicy = await ctx.prisma.buylistPricingPolicy.findFirst({
         where: {
           id: input.pricingPolicyId,
           installationId: ctx.installationId,
+        },
+        include: {
+          rules: {
+            where: { isActive: true },
+            orderBy: { priority: "asc" },
+          },
         },
       });
     } else {
@@ -247,6 +255,12 @@ export const buylistsRouter = router({
           installationId: ctx.installationId,
           isDefault: true,
           isActive: true,
+        },
+        include: {
+          rules: {
+            where: { isActive: true },
+            orderBy: { priority: "asc" },
+          },
         },
       });
     }
@@ -262,11 +276,12 @@ export const buylistsRouter = router({
         quotedPrice = line.buyPrice;
         finalPrice = line.buyPrice;
       } else {
-        // Calculate from pricing policy
+        // Calculate from pricing policy with rule engine
         const calculated = calculateLinePrice(
           line.marketPrice,
           line.condition,
-          pricingPolicy
+          pricingPolicy,
+          { variantId: line.saleorVariantId }
         );
         quotedPrice = calculated.quotedPrice;
         finalPrice = calculated.finalPrice;
@@ -362,12 +377,18 @@ export const buylistsRouter = router({
     // Generate buylist number
     const buylistNumber = await generateBuylistNumber(ctx.prisma, ctx.installationId);
 
-    // Get default pricing policy
+    // Get default pricing policy with rules
     const pricingPolicy = await ctx.prisma.buylistPricingPolicy.findFirst({
       where: {
         installationId: ctx.installationId,
         isDefault: true,
         isActive: true,
+      },
+      include: {
+        rules: {
+          where: { isActive: true },
+          orderBy: { priority: "asc" },
+        },
       },
     });
 
@@ -381,7 +402,8 @@ export const buylistsRouter = router({
         const calculated = calculateLinePrice(
           line.marketPrice,
           line.condition,
-          pricingPolicy
+          pricingPolicy,
+          { variantId: line.saleorVariantId }
         );
         buyPrice = calculated.finalPrice;
       }
@@ -540,7 +562,14 @@ export const buylistsRouter = router({
           installationId: ctx.installationId,
         },
         include: {
-          pricingPolicy: true,
+          pricingPolicy: {
+            include: {
+              rules: {
+                where: { isActive: true },
+                orderBy: { priority: "asc" },
+              },
+            },
+          },
           lines: {
             orderBy: { lineNumber: "desc" },
             take: 1,
@@ -573,7 +602,8 @@ export const buylistsRouter = router({
         const calculated = calculateLinePrice(
           input.line.marketPrice,
           input.line.condition,
-          buylist.pricingPolicy
+          buylist.pricingPolicy,
+          { variantId: input.line.saleorVariantId }
         );
         quotedPrice = calculated.quotedPrice;
         finalPrice = calculated.finalPrice;
@@ -620,7 +650,16 @@ export const buylistsRouter = router({
         where: { id: input.lineId },
         include: {
           buylist: {
-            include: { pricingPolicy: true },
+            include: {
+              pricingPolicy: {
+                include: {
+                  rules: {
+                    where: { isActive: true },
+                    orderBy: { priority: "asc" },
+                  },
+                },
+              },
+            },
           },
         },
       });
@@ -652,7 +691,8 @@ export const buylistsRouter = router({
         const { quotedPrice, finalPrice } = calculateLinePrice(
           line.marketPrice.toNumber(),
           input.data.condition,
-          line.buylist.pricingPolicy
+          line.buylist.pricingPolicy,
+          { variantId: line.saleorVariantId }
         );
         updates.condition = input.data.condition;
         updates.quotedPrice = new Decimal(quotedPrice);
@@ -732,7 +772,14 @@ export const buylistsRouter = router({
           installationId: ctx.installationId,
         },
         include: {
-          pricingPolicy: true,
+          pricingPolicy: {
+            include: {
+              rules: {
+                where: { isActive: true },
+                orderBy: { priority: "asc" },
+              },
+            },
+          },
           lines: true,
         },
       });
@@ -758,12 +805,13 @@ export const buylistsRouter = router({
         });
       }
 
-      // Recalculate all line prices
+      // Recalculate all line prices using rule engine
       for (const line of buylist.lines) {
         const { quotedPrice, finalPrice } = calculateLinePrice(
           line.marketPrice.toNumber(),
           line.condition,
-          buylist.pricingPolicy
+          buylist.pricingPolicy,
+          { variantId: line.saleorVariantId }
         );
 
         await ctx.prisma.buylistLine.update({
@@ -780,7 +828,8 @@ export const buylistsRouter = router({
         const { quotedPrice } = calculateLinePrice(
           line.marketPrice.toNumber(),
           line.condition,
-          buylist.pricingPolicy
+          buylist.pricingPolicy,
+          { variantId: line.saleorVariantId }
         );
         return sum.add(new Decimal(quotedPrice).mul(line.qty));
       }, new Decimal(0));
@@ -998,60 +1047,49 @@ export const buylistsRouter = router({
 });
 
 /**
- * Calculate line price based on market price, condition, and policy
+ * Policy with rules type for pricing calculations
+ */
+type PolicyWithRules = BuylistPricingPolicy & { rules: PrismaPricingRule[] };
+
+/**
+ * Calculate line price based on market price, condition, and policy using the rule engine
+ * This properly applies pricing rules defined in the policy.
  */
 function calculateLinePrice(
   marketPrice: number,
   condition: string,
-  policy: any
+  policy: PolicyWithRules | null,
+  options?: {
+    variantId?: string;
+    productId?: string;
+    categoryId?: string;
+  }
 ): { quotedPrice: number; finalPrice: number } {
-  let baseOffer: number;
-
+  // If no policy, use simple 50% fallback
   if (!policy) {
-    // Default: 50% of market price
-    baseOffer = marketPrice * 0.5;
-  } else {
-    switch (policy.policyType) {
-      case "PERCENTAGE":
-        baseOffer = marketPrice * ((policy.basePercentage?.toNumber() ?? 50) / 100);
-        break;
-      case "FIXED_DISCOUNT":
-        baseOffer = Math.max(0, marketPrice - (policy.basePercentage?.toNumber() ?? 0));
-        break;
-      case "TIERED": {
-        const rules = policy.tieredRules as Array<{
-          minValue: number;
-          maxValue: number | null;
-          percentage: number;
-        }> | null;
-        const tier = rules?.find(
-          (r) => marketPrice >= r.minValue && (r.maxValue === null || marketPrice < r.maxValue)
-        );
-        baseOffer = marketPrice * ((tier?.percentage ?? 50) / 100);
-        break;
-      }
-      default:
-        baseOffer = marketPrice * 0.5;
-    }
+    const fallbackPrice = Math.round(marketPrice * 0.5 * 100) / 100;
+    return { quotedPrice: fallbackPrice, finalPrice: fallbackPrice };
   }
 
-  // Apply condition multiplier
-  const multipliers = (policy?.conditionMultipliers as Record<string, number>) ?? DEFAULT_CONDITION_MULTIPLIERS;
-  const conditionMultiplier = multipliers[condition] ?? 1.0;
-  let finalOffer = baseOffer * conditionMultiplier;
+  // Use the rule engine to calculate price with full rule support
+  const result = ruleEngine.calculatePrice({
+    policy,
+    rules: policy.rules ?? [],
+    marketPrice,
+    condition,
+    attributes: {
+      variantId: options?.variantId ?? "",
+      productId: options?.productId ?? "",
+      categoryId: options?.categoryId,
+    },
+    // Note: Inventory data not available in this context
+    // For inventory-based rules, the pricing.calculatePrice tRPC endpoint should be used
+  });
 
-  // Apply min/max constraints
-  if (policy?.minimumPrice && finalOffer < policy.minimumPrice.toNumber()) {
-    finalOffer = policy.minimumPrice.toNumber();
-  }
-  if (policy?.maximumPrice && finalOffer > policy.maximumPrice.toNumber()) {
-    finalOffer = policy.maximumPrice.toNumber();
-  }
-
-  // Round to 2 decimal places
-  const quotedPrice = Math.round(finalOffer * 100) / 100;
-
-  return { quotedPrice, finalPrice: quotedPrice };
+  return {
+    quotedPrice: result.finalOffer,
+    finalPrice: result.finalOffer,
+  };
 }
 
 /**

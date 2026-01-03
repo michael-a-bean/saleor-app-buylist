@@ -94,6 +94,8 @@ const updateRuleSchema = createRuleSchema.partial().omit({ policyId: true });
 const listRulesSchema = z.object({
   policyId: z.string().uuid(),
   isActive: z.boolean().optional(),
+  /** Filter to only rules that are active and within their time window right now */
+  activeNow: z.boolean().optional(),
   search: z.string().optional(),
   limit: z.number().min(1).max(100).optional().default(50),
   offset: z.number().min(0).optional().default(0),
@@ -110,7 +112,10 @@ export const rulesRouter = router({
   list: protectedClientProcedure
     .input(listRulesSchema)
     .query(async ({ ctx, input }) => {
-      const where = {
+      const now = new Date();
+
+      // Build the where clause
+      const where: Prisma.PricingRuleWhereInput = {
         installationId: ctx.installationId,
         policyId: input.policyId,
         ...(input.isActive !== undefined && { isActive: input.isActive }),
@@ -121,6 +126,21 @@ export const rulesRouter = router({
           ],
         }),
       };
+
+      // activeNow filter: isActive = true AND within time window
+      if (input.activeNow) {
+        where.isActive = true;
+        where.AND = [
+          // startsAt is null OR startsAt <= now
+          {
+            OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+          },
+          // endsAt is null OR endsAt >= now
+          {
+            OR: [{ endsAt: null }, { endsAt: { gte: now } }],
+          },
+        ];
+      }
 
       const [rules, total] = await Promise.all([
         ctx.prisma.pricingRule.findMany({

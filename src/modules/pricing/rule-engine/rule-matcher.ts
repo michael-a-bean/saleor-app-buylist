@@ -67,6 +67,13 @@ export class RuleMatcher {
 
   /**
    * Check if a rule is active at the given time
+   *
+   * Time boundaries follow half-open interval convention [startsAt, endsAt):
+   * - startsAt: inclusive (rule IS active at exactly startsAt)
+   * - endsAt: exclusive (rule is NOT active at exactly endsAt)
+   *
+   * This matches typical scheduling semantics where an event "ending at midnight"
+   * means it's active until 23:59:59 but not at exactly midnight.
    */
   isRuleActiveAtTime(rule: PricingRule, time: Date): boolean {
     const { startsAt, endsAt } = rule;
@@ -76,13 +83,13 @@ export class RuleMatcher {
       return true;
     }
 
-    // Check start time
+    // Check start time (inclusive: rule active when time >= startsAt)
     if (startsAt && time < startsAt) {
       return false;
     }
 
-    // Check end time
-    if (endsAt && time > endsAt) {
+    // Check end time (exclusive: rule NOT active when time >= endsAt)
+    if (endsAt && time >= endsAt) {
       return false;
     }
 

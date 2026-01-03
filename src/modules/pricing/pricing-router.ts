@@ -2,8 +2,12 @@ import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 
+import { createInstrumentedGraphqlClient } from "@/lib/graphql-client";
+import { saleorApp } from "@/lib/saleor-app";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+import { AttributeCacheService } from "./attribute-cache";
+import { attributesRouter } from "./attributes-router";
 import { ruleEngine, type ProductAttributes } from "./rule-engine";
 import { rulesRouter } from "./rules-router";
 
@@ -85,7 +89,7 @@ export const pricingRouter = router({
         skip: input?.offset ?? 0,
         include: {
           _count: {
-            select: { buylists: true },
+            select: { buylists: true, rules: true },
           },
         },
       }),
@@ -112,7 +116,7 @@ export const pricingRouter = router({
         },
         include: {
           _count: {
-            select: { buylists: true },
+            select: { buylists: true, rules: true },
           },
         },
       });
@@ -398,6 +402,8 @@ export const pricingRouter = router({
         }).optional(),
         // Optional inventory data for rule evaluation
         qtyOnHand: z.number().int().min(0).optional(),
+        // Whether to fetch attributes from cache when variantId is provided (default: true)
+        useCachedAttributes: z.boolean().default(true),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -440,12 +446,53 @@ export const pricingRouter = router({
       }
 
       // Build product attributes for rule evaluation
+      // First, try to get cached attributes if variantId is provided and useCachedAttributes is true
+      let cachedAttrs: Record<string, unknown> = {};
+      let cachedQtyOnHand: number | undefined;
+
+      if (input.variantId && input.useCachedAttributes) {
+        try {
+          const authData = await saleorApp.apl.get(ctx.saleorApiUrl);
+          if (authData) {
+            const gqlClient = createInstrumentedGraphqlClient({
+              saleorApiUrl: authData.saleorApiUrl,
+              token: authData.token,
+            });
+            const cacheService = new AttributeCacheService(
+              ctx.prisma,
+              gqlClient,
+              ctx.installationId
+            );
+            const result = await cacheService.getAttributes(input.variantId);
+            if (result.success && result.cached) {
+              cachedAttrs = {
+                setCode: result.cached.setCode,
+                setName: result.cached.setName,
+                rarity: result.cached.rarity,
+                finish: result.cached.finish,
+                cardType: result.cached.cardType,
+                formatLegality: result.cached.formatLegality,
+              };
+              cachedQtyOnHand = result.cached.qtyOnHand;
+            }
+          }
+        } catch {
+          // Cache fetch failed, continue without cached attributes
+        }
+      }
+
+      // Merge: explicit attributes override cached, cached overrides empty
       const productAttributes: ProductAttributes = {
         variantId: input.variantId ?? "",
         productId: input.productId ?? "",
         categoryId: input.categoryId,
-        ...input.attributes,
+        ...cachedAttrs,
+        ...input.attributes, // Explicit attributes override cached
       };
+
+      // Determine inventory data: explicit input > cached > undefined
+      const qtyOnHand = input.qtyOnHand ?? cachedQtyOnHand;
+      const inventoryData = qtyOnHand !== undefined ? { qtyOnHand } : undefined;
 
       // Use the rule engine to calculate the price
       const result = ruleEngine.calculatePrice({
@@ -454,7 +501,7 @@ export const pricingRouter = router({
         marketPrice: input.marketPrice,
         condition: input.condition,
         attributes: productAttributes,
-        inventory: input.qtyOnHand !== undefined ? { qtyOnHand: input.qtyOnHand } : undefined,
+        inventory: inventoryData,
         categoryId: input.categoryId,
       });
 
@@ -466,9 +513,11 @@ export const pricingRouter = router({
         baseOffer: Math.round(result.baseOffer * 100) / 100,
         conditionMultiplier: result.conditionMultiplier,
         finalOffer: result.finalOffer,
-        // New: rule application details
+        // Rule application details
         appliedRules: result.appliedRules,
         constraintsApplied: result.constraintsApplied,
+        // Attribute source info
+        usedCachedAttributes: Object.keys(cachedAttrs).length > 0,
       };
     }),
 
@@ -500,6 +549,8 @@ export const pricingRouter = router({
             qtyOnHand: z.number().int().min(0).optional(),
           })
         ),
+        // Whether to fetch attributes from cache (default: true)
+        useCachedAttributes: z.boolean().default(true),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -541,15 +592,68 @@ export const pricingRouter = router({
         });
       }
 
+      // Batch fetch cached attributes if enabled
+      type CachedAttrMap = Map<string, { attrs: Record<string, unknown>; qtyOnHand?: number }>;
+      let cachedAttrsMap: CachedAttrMap = new Map();
+
+      if (input.useCachedAttributes) {
+        try {
+          const authData = await saleorApp.apl.get(ctx.saleorApiUrl);
+          if (authData) {
+            const gqlClient = createInstrumentedGraphqlClient({
+              saleorApiUrl: authData.saleorApiUrl,
+              token: authData.token,
+            });
+            const cacheService = new AttributeCacheService(
+              ctx.prisma,
+              gqlClient,
+              ctx.installationId
+            );
+
+            // Get all variant IDs that need cache lookup
+            const variantIds = input.items
+              .filter((item) => !item.attributes) // Only fetch for items without explicit attrs
+              .map((item) => item.variantId);
+
+            if (variantIds.length > 0) {
+              const cachedBulk = await cacheService.getCachedBulk(variantIds);
+              for (const [variantId, cached] of cachedBulk) {
+                cachedAttrsMap.set(variantId, {
+                  attrs: {
+                    setCode: cached.setCode,
+                    setName: cached.setName,
+                    rarity: cached.rarity,
+                    finish: cached.finish,
+                    cardType: cached.cardType,
+                    formatLegality: cached.formatLegality,
+                  },
+                  qtyOnHand: cached.qtyOnHand,
+                });
+              }
+            }
+          }
+        } catch {
+          // Cache fetch failed, continue without cached attributes
+        }
+      }
+
       // Calculate prices for each item using the rule engine
       const results = input.items.map((item) => {
+        // Get cached attributes if available and no explicit attrs provided
+        const cachedData = cachedAttrsMap.get(item.variantId);
+
         // Build product attributes for rule evaluation
         const productAttributes: ProductAttributes = {
           variantId: item.variantId,
           productId: item.productId ?? "",
           categoryId: item.categoryId,
-          ...item.attributes,
+          ...(cachedData?.attrs ?? {}),
+          ...item.attributes, // Explicit attributes override cached
         };
+
+        // Determine inventory: explicit > cached > undefined
+        const qtyOnHand = item.qtyOnHand ?? cachedData?.qtyOnHand;
+        const inventoryData = qtyOnHand !== undefined ? { qtyOnHand } : undefined;
 
         // Use the rule engine
         const result = ruleEngine.calculatePrice({
@@ -558,7 +662,7 @@ export const pricingRouter = router({
           marketPrice: item.marketPrice,
           condition: item.condition,
           attributes: productAttributes,
-          inventory: item.qtyOnHand !== undefined ? { qtyOnHand: item.qtyOnHand } : undefined,
+          inventory: inventoryData,
           categoryId: item.categoryId,
         });
 
@@ -568,6 +672,7 @@ export const pricingRouter = router({
           condition: item.condition,
           finalOffer: result.finalOffer,
           appliedRules: result.appliedRules,
+          usedCachedAttributes: !!cachedData && !item.attributes,
         };
       });
 
@@ -583,6 +688,12 @@ export const pricingRouter = router({
    * Provides endpoints for managing dynamic pricing rules
    */
   rules: rulesRouter,
+
+  /**
+   * Product attributes cache sub-router
+   * Provides endpoints for caching and querying product attributes from Saleor
+   */
+  attributes: attributesRouter,
 });
 
 /**

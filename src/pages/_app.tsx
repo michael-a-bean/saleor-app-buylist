@@ -30,16 +30,14 @@ function NextApp({ Component, pageProps }: AppProps) {
             "/buylists",
             "/buylists/new",
             "/buylists/[id]",
-            "/buylists/[id]/grading",
-            "/buylists/[id]/quote",
-            "/buylists/[id]/payout",
             // BOH routes
             "/boh/queue",
-            "/boh/buylists/[id]/review",
-            "/boh/buylists/[id]/receive",
+            "/boh/buylists/[id]/verify",
             // Pricing routes
             "/pricing/policies",
-            "/pricing/history",
+            "/pricing/rules",
+            "/pricing/rules/new",
+            "/pricing/rules/[id]/edit",
           ]}
           fallback={<IframeProtectedFallback appName="Buylist" />}
         >
