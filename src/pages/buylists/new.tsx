@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { BuylistCustomerSearch } from "@/ui/components/BuylistCustomerSearch";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },
@@ -47,8 +48,28 @@ interface CardSearchResult {
   currency: string;
 }
 
+interface SelectedCustomer {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  phone: string | null;
+  storeCredit: {
+    balance: number;
+    currency: string;
+  };
+  buylistHistory: {
+    count: number;
+    totalValue: number;
+  };
+}
+
 export default function NewBuylistPage() {
   const router = useRouter();
+  // Customer state
+  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
+  const [saleorUserId, setSaleorUserId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -293,6 +314,12 @@ export default function NewBuylistPage() {
       return;
     }
 
+    // Store credit requires a customer account
+    if (payoutMethod === "STORE_CREDIT" && !saleorUserId) {
+      setError("Store credit payout requires a customer account. Please search and select a customer.");
+      return;
+    }
+
     // Warn if CASH payout without register (but allow it)
     if (payoutMethod === "CASH" && !selectedRegisterId && openRegistersQuery.data && openRegistersQuery.data.length > 0) {
       const confirmNoRegister = window.confirm(
@@ -308,6 +335,7 @@ export default function NewBuylistPage() {
 
     createAndPayMutation.mutate({
       saleorWarehouseId: selectedWarehouseId,
+      saleorUserId: saleorUserId || undefined,
       customerName: customerName || undefined,
       customerEmail: customerEmail || undefined,
       customerPhone: customerPhone || undefined,
@@ -359,26 +387,20 @@ export default function NewBuylistPage() {
         borderColor="default1"
       >
         <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
-          Customer Information
+          Customer
         </Text>
-        <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4}>
-          <Input
-            label="Name"
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
-          />
-          <Input
-            label="Email"
-            type="email"
-            value={customerEmail}
-            onChange={(e) => setCustomerEmail(e.target.value)}
-          />
-          <Input
-            label="Phone"
-            value={customerPhone}
-            onChange={(e) => setCustomerPhone(e.target.value)}
-          />
-        </Box>
+        <BuylistCustomerSearch
+          selectedCustomer={selectedCustomer}
+          onSelectCustomer={setSelectedCustomer}
+          onCustomerFieldsChange={(fields) => {
+            setSaleorUserId(fields.saleorUserId);
+            setCustomerName(fields.customerName);
+            setCustomerEmail(fields.customerEmail);
+            setCustomerPhone(fields.customerPhone);
+          }}
+          required={payoutMethod === "STORE_CREDIT"}
+          requiredMessage="Store credit payout requires a customer account"
+        />
         <Box marginTop={4} display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
           <Input
             label="Notes"
