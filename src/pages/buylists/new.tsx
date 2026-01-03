@@ -59,6 +59,7 @@ export default function NewBuylistPage() {
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
   const [payoutMethod, setPayoutMethod] = useState<string>("CASH");
   const [payoutReference, setPayoutReference] = useState("");
+  const [selectedRegisterId, setSelectedRegisterId] = useState<string>("");
 
   // Card search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -77,6 +78,12 @@ export default function NewBuylistPage() {
 
   // Fetch default pricing policy for buy price calculation
   const defaultPolicyQuery = trpcClient.pricing.getDefault.useQuery();
+
+  // Fetch open registers for cash payouts
+  const openRegistersQuery = trpcClient.register.listOpen.useQuery(
+    { saleorWarehouseId: selectedWarehouseId || undefined },
+    { enabled: payoutMethod === "CASH" }
+  );
 
   // Search cards query
   const searchCardsQuery = trpcClient.buylists.searchCards.useQuery(
@@ -104,6 +111,18 @@ export default function NewBuylistPage() {
       setSelectedWarehouseId(warehousesQuery.data[0].id);
     }
   }, [warehousesQuery.data, selectedWarehouseId]);
+
+  // Auto-select register if only one is open
+  useEffect(() => {
+    if (payoutMethod === "CASH" && openRegistersQuery.data) {
+      if (openRegistersQuery.data.length === 1 && !selectedRegisterId) {
+        setSelectedRegisterId(openRegistersQuery.data[0].id);
+      }
+    } else {
+      // Clear register selection when not CASH
+      setSelectedRegisterId("");
+    }
+  }, [payoutMethod, openRegistersQuery.data, selectedRegisterId]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -274,6 +293,16 @@ export default function NewBuylistPage() {
       return;
     }
 
+    // Warn if CASH payout without register (but allow it)
+    if (payoutMethod === "CASH" && !selectedRegisterId && openRegistersQuery.data && openRegistersQuery.data.length > 0) {
+      const confirmNoRegister = window.confirm(
+        "No register selected. Cash payout will not be recorded against a register. Continue anyway?"
+      );
+      if (!confirmNoRegister) {
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -286,6 +315,7 @@ export default function NewBuylistPage() {
       currency: "USD",
       payoutMethod: payoutMethod as "CASH" | "STORE_CREDIT" | "CHECK" | "BANK_TRANSFER" | "PAYPAL" | "OTHER",
       payoutReference: payoutReference || undefined,
+      posRegisterSessionId: payoutMethod === "CASH" && selectedRegisterId ? selectedRegisterId : undefined,
       lines: lines.map((l) => ({
         saleorVariantId: l.variantId,
         saleorVariantSku: l.variantSku,
@@ -609,6 +639,47 @@ export default function NewBuylistPage() {
               placeholder="Check #, transaction ID, etc."
             />
           </Box>
+
+          {/* Register Selection for Cash Payouts */}
+          {payoutMethod === "CASH" && (
+            <Box marginTop={4}>
+              {openRegistersQuery.isLoading ? (
+                <Text color="default2">Loading registers...</Text>
+              ) : openRegistersQuery.data && openRegistersQuery.data.length > 0 ? (
+                <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4} alignItems="end">
+                  <Select
+                    label="Pay from Register"
+                    value={selectedRegisterId}
+                    onChange={(value) => setSelectedRegisterId(value as string)}
+                    options={openRegistersQuery.data.map((reg) => ({
+                      value: reg.id,
+                      label: `${reg.registerCode} (${reg.status}) - $${reg.estimatedCash.toFixed(2)} in drawer`,
+                    }))}
+                  />
+                  {selectedRegisterId && openRegistersQuery.data.find((r) => r.id === selectedRegisterId) && (
+                    <Box>
+                      <Text size={2} color="default2">
+                        Current drawer: ${openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash.toFixed(2)}
+                      </Text>
+                      <Text size={2} color="default2">
+                        After payout: ${(
+                          (openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash ?? 0) -
+                          lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0)
+                        ).toFixed(2)}
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+              ) : (
+                <Box padding={3} backgroundColor="warning1" borderRadius={4}>
+                  <Text color="warning1">
+                    No open registers found. Cash payout will not be tracked against a register.
+                    Open a register in the POS app to track cash payouts.
+                  </Text>
+                </Box>
+              )}
+            </Box>
+          )}
         </Box>
       )}
 

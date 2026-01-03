@@ -96,6 +96,7 @@ const createAndPaySchema = z.object({
   notes: z.string().optional().nullable(),
   payoutMethod: payoutMethodEnum,
   payoutReference: z.string().optional().nullable(), // Check #, transaction ID, etc.
+  posRegisterSessionId: z.string().uuid().optional().nullable(), // POS register for CASH payout
   lines: z.array(buylistLineSchema).min(1, "At least one line is required"),
   idempotencyKey: z.string().optional(), // Client-provided key to prevent duplicate submissions
 });
@@ -474,7 +475,7 @@ export const buylistsRouter = router({
       });
 
       // Create payout record with idempotency key
-      await tx.buylistPayout.create({
+      const payout = await tx.buylistPayout.create({
         data: {
           buylistId: newBuylist.id,
           method: input.payoutMethod,
@@ -482,11 +483,70 @@ export const buylistsRouter = router({
           amount: totalAmount,
           currency: input.currency,
           reference: input.payoutReference ?? null,
+          posRegisterSessionId: input.posRegisterSessionId ?? null,
           processedAt: now,
           processedBy: userId,
           idempotencyKey,
         },
       });
+
+      // Record cash movement if CASH payout with register session
+      if (input.payoutMethod === "CASH" && input.posRegisterSessionId) {
+        // Verify register session is open
+        const session = await tx.registerSession.findFirst({
+          where: {
+            id: input.posRegisterSessionId,
+            installationId: ctx.installationId,
+            status: { in: ["OPEN", "SUSPENDED"] },
+          },
+        });
+
+        if (!session) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Selected register is not open. Please select an open register.",
+          });
+        }
+
+        // Create cash movement (negative = cash out of drawer)
+        const cashMovement = await tx.cashMovement.create({
+          data: {
+            registerSessionId: input.posRegisterSessionId,
+            movementType: "PAYOUT",
+            amount: totalAmount.negated(), // Negative for cash out
+            currency: input.currency,
+            reason: `Buylist payout: ${buylistNumber}`,
+            referenceNumber: payout.id,
+            buylistPayoutId: payout.id,
+            performedBy: userId ?? "system",
+            performedAt: now,
+            notes: `Customer: ${input.customerName ?? "Walk-in"}`,
+          },
+        });
+
+        // Update payout with cash movement ID
+        await tx.buylistPayout.update({
+          where: { id: payout.id },
+          data: { posCashMovementId: cashMovement.id },
+        });
+
+        // Update register session totalCashOut
+        await tx.registerSession.update({
+          where: { id: input.posRegisterSessionId },
+          data: {
+            totalCashOut: { increment: totalAmount.toNumber() },
+          },
+        });
+
+        logger.info("Cash payout recorded against register", {
+          buylistNumber,
+          payoutId: payout.id,
+          registerSessionId: input.posRegisterSessionId,
+          registerCode: session.registerCode,
+          amount: totalAmount.toString(),
+          cashMovementId: cashMovement.id,
+        });
+      }
 
       // Issue store credit if payout method is STORE_CREDIT
       if (input.payoutMethod === "STORE_CREDIT" && input.saleorUserId) {
@@ -555,6 +615,7 @@ export const buylistsRouter = router({
             totalAmount: totalAmount.toString(),
             payoutMethod: input.payoutMethod,
             ...(input.payoutMethod === "STORE_CREDIT" && { customerId: input.saleorUserId }),
+            ...(input.payoutMethod === "CASH" && input.posRegisterSessionId && { registerSessionId: input.posRegisterSessionId }),
           },
         },
       });
