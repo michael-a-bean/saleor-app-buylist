@@ -91,6 +91,7 @@ const createAndPaySchema = z.object({
   customerName: z.string().optional().nullable(),
   customerEmail: z.string().email().optional().nullable(),
   customerPhone: z.string().optional().nullable(),
+  saleorUserId: z.string().optional().nullable(), // Required for STORE_CREDIT payout
   currency: z.string().length(3).default("USD"),
   notes: z.string().optional().nullable(),
   payoutMethod: payoutMethodEnum,
@@ -348,8 +349,17 @@ export const buylistsRouter = router({
   /**
    * Create and pay buylist in one step (simplified face-to-face workflow)
    * Creates buylist, records payout, sets status to PENDING_VERIFICATION
+   * For STORE_CREDIT payouts, credits the customer's store credit account
    */
   createAndPay: protectedClientProcedure.input(createAndPaySchema).mutation(async ({ ctx, input }) => {
+    // Validate store credit payout requires a customer
+    if (input.payoutMethod === "STORE_CREDIT" && !input.saleorUserId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Store credit payout requires a customer. Please attach a customer to this buylist.",
+      });
+    }
+
     // Generate or use provided idempotency key
     const idempotencyKey =
       input.idempotencyKey ??
@@ -444,6 +454,7 @@ export const buylistsRouter = router({
           customerName: input.customerName ?? null,
           customerEmail: input.customerEmail ?? null,
           customerPhone: input.customerPhone ?? null,
+          saleorUserId: input.saleorUserId ?? null,
           currency: input.currency,
           pricingPolicyId: pricingPolicy?.id ?? null,
           totalQuotedAmount: totalAmount,
@@ -477,6 +488,61 @@ export const buylistsRouter = router({
         },
       });
 
+      // Issue store credit if payout method is STORE_CREDIT
+      if (input.payoutMethod === "STORE_CREDIT" && input.saleorUserId) {
+        // Get or create credit account
+        let credit = await tx.customerCredit.findUnique({
+          where: {
+            installationId_saleorCustomerId: {
+              installationId: ctx.installationId,
+              saleorCustomerId: input.saleorUserId,
+            },
+          },
+        });
+
+        const previousBalance = credit?.balance.toNumber() ?? 0;
+        const creditAmount = totalAmount.toNumber();
+        const newBalance = previousBalance + creditAmount;
+
+        if (!credit) {
+          credit = await tx.customerCredit.create({
+            data: {
+              installationId: ctx.installationId,
+              saleorCustomerId: input.saleorUserId,
+              balance: newBalance,
+              currency: input.currency,
+            },
+          });
+        } else {
+          credit = await tx.customerCredit.update({
+            where: { id: credit.id },
+            data: { balance: newBalance },
+          });
+        }
+
+        // Record credit transaction
+        await tx.creditTransaction.create({
+          data: {
+            creditAccountId: credit.id,
+            transactionType: "BUYLIST_PAYOUT",
+            amount: creditAmount,
+            currency: input.currency,
+            balanceAfter: newBalance,
+            sourceBuylistId: newBuylist.id,
+            note: `Store credit from buylist ${buylistNumber}`,
+            createdBy: userId,
+          },
+        });
+
+        logger.info("Store credit issued from buylist", {
+          buylistId: newBuylist.id,
+          buylistNumber,
+          customerId: input.saleorUserId,
+          creditAmount,
+          newBalance,
+        });
+      }
+
       // Create audit event
       await tx.buylistAuditEvent.create({
         data: {
@@ -488,6 +554,7 @@ export const buylistsRouter = router({
             lineCount: input.lines.length,
             totalAmount: totalAmount.toString(),
             payoutMethod: input.payoutMethod,
+            ...(input.payoutMethod === "STORE_CREDIT" && { customerId: input.saleorUserId }),
           },
         },
       });
