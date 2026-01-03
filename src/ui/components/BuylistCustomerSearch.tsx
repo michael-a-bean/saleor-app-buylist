@@ -191,11 +191,11 @@ export const BuylistCustomerSearch: React.FC<BuylistCustomerSearchProps> = ({
       if (!newCustomer.email || !newCustomer.firstName || !newCustomer.lastName) {
         return;
       }
+      // Note: phone is stored locally on buylist, not in Saleor (per Saleor core pattern)
       createCustomer.mutate({
         email: newCustomer.email,
         firstName: newCustomer.firstName,
         lastName: newCustomer.lastName,
-        phone: newCustomer.phone || undefined,
       });
     },
     [newCustomer, createCustomer]

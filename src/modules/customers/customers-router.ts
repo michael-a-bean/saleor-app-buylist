@@ -26,12 +26,13 @@ const searchCustomersSchema = z.object({
 
 /**
  * Create customer schema
+ * Note: Phone is stored on addresses in Saleor, not directly on users.
+ * Use addressCreate or include in defaultShippingAddress to set phone.
  */
 const createCustomerSchema = z.object({
   email: z.string().email(),
   firstName: z.string().min(1).max(255),
   lastName: z.string().min(1).max(255),
-  phone: z.string().max(50).optional(),
   note: z.string().max(1000).optional(),
 });
 
