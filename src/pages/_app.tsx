@@ -37,6 +37,7 @@ function NextApp({ Component, pageProps }: AppProps) {
             "/pricing/policies",
             "/pricing/rules",
             "/pricing/rules/new",
+            "/pricing/rules/test",
             "/pricing/rules/[id]/edit",
           ]}
           fallback={<IframeProtectedFallback appName="Buylist" />}

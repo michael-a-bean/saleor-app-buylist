@@ -152,9 +152,14 @@ export default function RulesListPage() {
             </Text>
           )}
         </Box>
-        <Link href={`/pricing/rules/new?policyId=${policyId}`}>
-          <Button variant="primary">New Rule</Button>
-        </Link>
+        <Box display="flex" gap={2}>
+          <Link href={`/pricing/rules/test?policyId=${policyId}`}>
+            <Button variant="secondary">Test Rules</Button>
+          </Link>
+          <Link href={`/pricing/rules/new?policyId=${policyId}`}>
+            <Button variant="primary">New Rule</Button>
+          </Link>
+        </Box>
       </Box>
 
       {error && (
