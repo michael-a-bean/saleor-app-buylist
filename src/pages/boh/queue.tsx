@@ -1,10 +1,27 @@
 import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
+import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 
 export default function BOHQueuePage() {
   const router = useRouter();
+  const { verified } = router.query;
+  const [recentlyVerified, setRecentlyVerified] = useState<string | null>(null);
+
+  // Detect if we just verified a buylist
+  useEffect(() => {
+    if (typeof verified === "string" && verified) {
+      setRecentlyVerified(verified);
+      // Clean up URL without triggering navigation
+      const url = new URL(window.location.href);
+      url.searchParams.delete("verified");
+      window.history.replaceState({}, "", url.toString());
+      // Auto-dismiss after 8 seconds
+      const timer = setTimeout(() => setRecentlyVerified(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [verified]);
 
   const statsQuery = trpcClient.boh.stats.useQuery(undefined, {
     refetchOnWindowFocus: true,
@@ -18,6 +35,39 @@ export default function BOHQueuePage() {
 
   return (
     <Box display="flex" flexDirection="column" gap={6}>
+      {/* Success Banner for recently verified buylist */}
+      {recentlyVerified && (
+        <Box
+          padding={4}
+          borderRadius={4}
+          backgroundColor="success1"
+          display="flex"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Box display="flex" alignItems="center" gap={2}>
+            <Text fontWeight="bold" size={5}>
+              ✓
+            </Text>
+            <Box>
+              <Text fontWeight="bold">
+                {recentlyVerified} verified successfully!
+              </Text>
+              <Text size={2}>
+                Cards have been added to inventory.
+              </Text>
+            </Box>
+          </Box>
+          <Button
+            onClick={() => setRecentlyVerified(null)}
+            variant="tertiary"
+            size="small"
+          >
+            Dismiss
+          </Button>
+        </Box>
+      )}
+
       <Box>
         <Text as="h1" size={8} fontWeight="bold">
           BOH Verification Queue

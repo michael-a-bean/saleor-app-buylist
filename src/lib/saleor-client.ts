@@ -91,6 +91,32 @@ const GET_VARIANT_BY_ID_QUERY = gql`
   }
 `;
 
+const GET_VARIANT_BY_SKU_QUERY = gql`
+  query GetVariantBySku($sku: String!, $channel: String!) {
+    productVariants(first: 1, filter: { sku: $sku }, channel: $channel) {
+      edges {
+        node {
+          id
+          sku
+          name
+        }
+      }
+    }
+  }
+`;
+
+interface GetVariantBySkuResponse {
+  productVariants: {
+    edges: Array<{
+      node: {
+        id: string;
+        sku: string | null;
+        name: string;
+      };
+    }>;
+  } | null;
+}
+
 // Stock Queries
 const GET_VARIANT_STOCKS_QUERY = gql`
   query GetVariantStocks($variantId: ID!, $channel: String!) {
@@ -471,6 +497,66 @@ export class SaleorClient {
     }
 
     return variantToCardResult(result.data.productVariant);
+  }
+
+  /**
+   * Get a variant by SKU
+   */
+  async getVariantBySku(sku: string): Promise<{ id: string; sku: string | null; name: string } | null> {
+    logger.debug("Getting variant by SKU", { sku });
+
+    const result = await this.client
+      .query<GetVariantBySkuResponse>(GET_VARIANT_BY_SKU_QUERY, {
+        sku,
+        channel: this.channel,
+      })
+      .toPromise();
+
+    if (result.error) {
+      logger.error("Failed to get variant by SKU", { error: result.error.message });
+      throw new Error(`Failed to get variant by SKU: ${result.error.message}`);
+    }
+
+    const variant = result.data?.productVariants?.edges[0]?.node;
+    return variant ?? null;
+  }
+
+  /**
+   * Get the condition-specific variant ID for a given base variant and condition.
+   *
+   * MTG variants follow SKU pattern: {baseId}-{condition}
+   * e.g., "abc123-NM", "abc123-LP", "abc123-MP", "abc123-HP", "abc123-DMG"
+   *
+   * @param baseVariantSku - The SKU of any variant for this card (usually NM)
+   * @param condition - The target condition (NM, LP, MP, HP, DMG)
+   * @returns The variant ID for the condition-specific variant, or null if not found
+   */
+  async getConditionVariantId(
+    baseVariantSku: string,
+    condition: "NM" | "LP" | "MP" | "HP" | "DMG"
+  ): Promise<string | null> {
+    // Extract base SKU by removing any existing condition suffix
+    const conditionSuffixes = ["-NM", "-LP", "-MP", "-HP", "-DMG"];
+    let baseSku = baseVariantSku;
+    for (const suffix of conditionSuffixes) {
+      if (baseSku.toUpperCase().endsWith(suffix)) {
+        baseSku = baseSku.slice(0, -suffix.length);
+        break;
+      }
+    }
+
+    // Build target SKU with condition
+    const targetSku = `${baseSku}-${condition}`;
+    logger.debug("Looking up condition variant", { baseVariantSku, baseSku, targetSku, condition });
+
+    const variant = await this.getVariantBySku(targetSku);
+    if (variant) {
+      logger.debug("Found condition variant", { targetSku, variantId: variant.id });
+      return variant.id;
+    }
+
+    logger.warn("Condition variant not found", { targetSku, condition });
+    return null;
   }
 
   /**

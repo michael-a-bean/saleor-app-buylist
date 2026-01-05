@@ -1,7 +1,9 @@
 import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
+import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { useToast } from "@/ui/components/Toast";
 
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "default2",
@@ -25,7 +27,20 @@ const CONDITION_LABELS: Record<string, string> = {
 
 export default function BuylistDetailPage() {
   const router = useRouter();
-  const { id } = router.query;
+  const { id, created } = router.query;
+  const { showSuccess, showError } = useToast();
+  const [showCreatedBanner, setShowCreatedBanner] = useState(false);
+
+  // Detect if this is a newly created buylist
+  useEffect(() => {
+    if (created === "true") {
+      setShowCreatedBanner(true);
+      // Clean up URL without triggering navigation
+      const url = new URL(window.location.href);
+      url.searchParams.delete("created");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [created]);
 
   const buylistQuery = trpcClient.buylists.getById.useQuery(
     { id: id as string },
@@ -36,7 +51,11 @@ export default function BuylistDetailPage() {
 
   const cancelMutation = trpcClient.buylists.cancel.useMutation({
     onSuccess: () => {
+      showSuccess("Buylist has been cancelled.");
       utils.buylists.getById.invalidate({ id: id as string });
+    },
+    onError: (err) => {
+      showError(`Failed to cancel buylist: ${err.message}`);
     },
   });
 
@@ -62,6 +81,43 @@ export default function BuylistDetailPage() {
 
   return (
     <Box display="flex" flexDirection="column" gap={6}>
+      {/* Success Banner for newly created buylist */}
+      {showCreatedBanner && buylist.status === "PENDING_VERIFICATION" && (
+        <Box
+          padding={4}
+          borderRadius={4}
+          backgroundColor="success1"
+          display="flex"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Box>
+            <Text fontWeight="bold">
+              Buylist created successfully!
+            </Text>
+            <Text size={2}>
+              Customer has been paid. This buylist is now ready for back-of-house verification.
+            </Text>
+          </Box>
+          <Box display="flex" gap={2}>
+            <Button
+              onClick={() => setShowCreatedBanner(false)}
+              variant="tertiary"
+              size="small"
+            >
+              Dismiss
+            </Button>
+            <Button
+              onClick={() => router.push(`/boh/buylists/${buylist.id}/verify`)}
+              variant="secondary"
+              size="small"
+            >
+              Verify Now
+            </Button>
+          </Box>
+        </Box>
+      )}
+
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="flex-start">
         <Box>
@@ -87,13 +143,21 @@ export default function BuylistDetailPage() {
             Back to List
           </Button>
           {buylist.status === "PENDING_VERIFICATION" && (
-            <Button
-              onClick={() => cancelMutation.mutate({ id: buylist.id })}
-              variant="tertiary"
-              disabled={cancelMutation.isLoading}
-            >
-              Cancel
-            </Button>
+            <>
+              <Button
+                onClick={() => router.push(`/boh/buylists/${buylist.id}/verify`)}
+                variant="secondary"
+              >
+                Verify Now
+              </Button>
+              <Button
+                onClick={() => cancelMutation.mutate({ id: buylist.id })}
+                variant="tertiary"
+                disabled={cancelMutation.isLoading}
+              >
+                Cancel
+              </Button>
+            </>
           )}
         </Box>
       </Box>

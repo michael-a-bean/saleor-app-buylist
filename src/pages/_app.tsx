@@ -12,6 +12,7 @@ import { AppProps } from "next/app";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { AppLayout } from "@/ui/components/app-layout";
+import { ToastProvider } from "@/ui/components/Toast";
 
 /**
  * Ensure instance is a singleton.
@@ -46,11 +47,13 @@ function NextApp({ Component, pageProps }: AppProps) {
             <GraphQLProvider>
               <ThemeSynchronizer />
               <RoutePropagator />
-              <Box padding={6}>
-                <AppLayout>
-                  <Component {...pageProps} />
-                </AppLayout>
-              </Box>
+              <ToastProvider>
+                <Box padding={6}>
+                  <AppLayout>
+                    <Component {...pageProps} />
+                  </AppLayout>
+                </Box>
+              </ToastProvider>
             </GraphQLProvider>
           </AppBridgeProvider>
         </IframeProtectedWrapper>

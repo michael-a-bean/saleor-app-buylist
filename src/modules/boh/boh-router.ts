@@ -154,13 +154,20 @@ export const bohRouter = router({
       const linesToProcess: Array<{
         line: typeof buylist.lines[0];
         qtyAccepted: number;
+        actualVariantId: string; // The condition-specific variant ID for stock
       }> = [];
+
+      // Create Saleor client for looking up condition variants
+      const saleorClient = createSaleorClient(ctx.apiClient);
 
       for (const line of buylist.lines) {
         const update = lineUpdates.get(line.id);
 
         // Default qtyAccepted to original qty if not specified
         const qtyAccepted = update?.qtyAccepted ?? line.qty;
+
+        // Get the final condition (may be updated by BOH)
+        const finalCondition = (update?.condition ?? line.condition) as "NM" | "LP" | "MP" | "HP" | "DMG";
 
         // Update line with condition changes and qtyAccepted
         await ctx.prisma.buylistLine.update({
@@ -175,11 +182,37 @@ export const bohRouter = router({
         if (qtyAccepted <= 0) continue;
 
         totalReceivedQty += qtyAccepted;
-        linesToProcess.push({ line, qtyAccepted });
+
+        // Look up the correct condition-specific variant for stock
+        // The stored variant may be NM but we need to add stock to the actual condition variant
+        let actualVariantId = line.saleorVariantId;
+        if (line.saleorVariantSku) {
+          const conditionVariantId = await saleorClient.getConditionVariantId(
+            line.saleorVariantSku,
+            finalCondition
+          );
+          if (conditionVariantId) {
+            actualVariantId = conditionVariantId;
+            logger.info("Using condition-specific variant for stock", {
+              lineId: line.id,
+              originalVariantId: line.saleorVariantId,
+              condition: finalCondition,
+              actualVariantId,
+            });
+          } else {
+            logger.warn("Could not find condition variant, using original", {
+              lineId: line.id,
+              sku: line.saleorVariantSku,
+              condition: finalCondition,
+            });
+          }
+        }
+
+        linesToProcess.push({ line, qtyAccepted, actualVariantId });
 
         // Add stock adjustment (positive delta = adding to inventory)
         stockAdjustments.push({
-          variantId: line.saleorVariantId,
+          variantId: actualVariantId,
           warehouseId: buylist.saleorWarehouseId,
           delta: qtyAccepted,
         });
@@ -223,13 +256,14 @@ export const bohRouter = router({
       }
 
       // Create cost layer events - use finalPrice (what we paid customer) as unit cost
+      // Use actualVariantId (condition-specific) for proper WAC tracking per condition
       let costEventsCreated = 0;
-      for (const { line, qtyAccepted } of linesToProcess) {
-        // Use optimized O(1) WAC calculation
+      for (const { line, qtyAccepted, actualVariantId } of linesToProcess) {
+        // Use optimized O(1) WAC calculation with the condition-specific variant
         const wacResult = await computeWacForNewEventOptimized({
           prisma: ctx.prisma,
           installationId: ctx.installationId,
-          variantId: line.saleorVariantId,
+          variantId: actualVariantId, // Use condition-specific variant for WAC
           warehouseId: buylist.saleorWarehouseId,
           newQtyDelta: qtyAccepted,
           newUnitCost: new Decimal(line.finalPrice.toString()),
@@ -240,7 +274,7 @@ export const bohRouter = router({
           data: {
             installationId: ctx.installationId,
             eventType: "BUYLIST_RECEIPT",
-            saleorVariantId: line.saleorVariantId,
+            saleorVariantId: actualVariantId, // Use condition-specific variant
             saleorWarehouseId: buylist.saleorWarehouseId,
             qtyDelta: qtyAccepted,
             unitCost: line.finalPrice, // Cost basis = what we paid the customer

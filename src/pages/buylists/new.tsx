@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { BuylistCustomerSearch } from "@/ui/components/BuylistCustomerSearch";
+import { useToast } from "@/ui/components/Toast";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },
@@ -67,6 +68,7 @@ interface SelectedCustomer {
 
 export default function NewBuylistPage() {
   const router = useRouter();
+  const { showSuccess, showError } = useToast();
   // Customer state
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
   const [saleorUserId, setSaleorUserId] = useState<string | null>(null);
@@ -160,9 +162,15 @@ export default function NewBuylistPage() {
 
   const createAndPayMutation = trpcClient.buylists.createAndPay.useMutation({
     onSuccess: (data) => {
-      router.push(`/buylists/${data.id}`);
+      const total = lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0);
+      const paymentMethodLabel = PAYOUT_METHODS.find((m) => m.value === payoutMethod)?.label ?? payoutMethod;
+      showSuccess(
+        `Buylist ${data.buylistNumber} created! Customer paid $${total.toFixed(2)} via ${paymentMethodLabel}.`
+      );
+      router.push(`/buylists/${data.id}?created=true`);
     },
     onError: (err) => {
+      showError(`Failed to create buylist: ${err.message}`);
       setError(err.message);
       setIsSubmitting(false);
     },

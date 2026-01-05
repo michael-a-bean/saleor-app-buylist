@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { useToast } from "@/ui/components/Toast";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },
@@ -30,6 +31,7 @@ interface LineVerification {
 export default function BOHVerifyPage() {
   const router = useRouter();
   const { id } = router.query;
+  const { showSuccess, showError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [internalNotes, setInternalNotes] = useState("");
   const [lineUpdates, setLineUpdates] = useState<Record<string, LineVerification>>({});
@@ -43,11 +45,17 @@ export default function BOHVerifyPage() {
 
   const verifyMutation = trpcClient.boh.verifyAndReceive.useMutation({
     onSuccess: () => {
+      const buylistNumber = buylistQuery.data?.buylistNumber ?? "Buylist";
+      const totalQty = Object.values(lineUpdates).reduce((sum, l) => sum + l.qtyAccepted, 0);
+      showSuccess(
+        `${buylistNumber} verified! ${totalQty} card${totalQty !== 1 ? "s" : ""} added to inventory.`
+      );
       utils.boh.queue.invalidate();
       utils.boh.stats.invalidate();
-      router.push("/boh/queue");
+      router.push(`/boh/queue?verified=${encodeURIComponent(buylistNumber)}`);
     },
     onError: (err) => {
+      showError(`Verification failed: ${err.message}`);
       setError(err.message);
     },
   });
