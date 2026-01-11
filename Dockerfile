@@ -20,9 +20,9 @@ COPY apps/buylist/ ./apps/buylist/
 COPY apps/inventory-ops/prisma/ ./apps/inventory-ops/prisma/
 
 # Install dependencies
-# Note: Using --no-frozen-lockfile because new app packages aren't in lockfile yet
-# For production, update pnpm-lock.yaml first
-RUN pnpm install --no-frozen-lockfile
+# IMPORTANT: Use --frozen-lockfile for reproducible builds
+# If this fails, update pnpm-lock.yaml locally first: pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Build stage
 FROM base AS builder
