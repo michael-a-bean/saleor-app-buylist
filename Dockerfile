@@ -35,6 +35,10 @@ ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
 
 # Skip env validation during build - real values come from runtime env
+# BASE_PATH enables path-based ALB routing in staging
+ARG BASE_PATH=""
+ENV BASE_PATH=${BASE_PATH}
+ENV NEXT_PUBLIC_BASE_PATH=${BASE_PATH}
 
 COPY --from=deps /app ./
 
