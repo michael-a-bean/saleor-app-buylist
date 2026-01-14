@@ -50,7 +50,8 @@ RUN pnpm turbo run build --filter=saleor-app-buylist
 FROM base AS runner
 WORKDIR /app
 
-RUN apk add --no-cache openssl
+# Install curl for health checks, openssl for Prisma
+RUN apk add --no-cache curl openssl
 
 ENV NODE_ENV=production
 ENV PNPM_HOME="/pnpm"
