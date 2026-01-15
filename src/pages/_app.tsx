@@ -1,5 +1,25 @@
 import "@saleor/macaw-ui/style";
 
+/**
+ * Polyfill for crypto.randomUUID() in non-secure contexts (HTTP).
+ *
+ * The Saleor App SDK uses crypto.randomUUID() which is only available in
+ * secure contexts (HTTPS or localhost). This polyfill enables the app to
+ * work over plain HTTP for staging environments without TLS.
+ *
+ * This MUST be imported before any code that uses AppBridge.
+ */
+if (typeof window !== "undefined" && typeof crypto !== "undefined" && !crypto.randomUUID) {
+  crypto.randomUUID = function randomUUID(): `${string}-${string}-${string}-${string}-${string}` {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as `${string}-${string}-${string}-${string}-${string}`;
+  };
+}
+
 import { AppBridge, AppBridgeProvider } from "@saleor/app-sdk/app-bridge";
 import { RoutePropagator } from "@saleor/app-sdk/app-bridge/next";
 import { GraphQLProvider } from "@saleor/apps-shared/graphql-provider";
