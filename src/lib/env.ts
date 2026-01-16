@@ -26,7 +26,8 @@ export const env = createEnv({
 
     // App configuration
     ALLOWED_DOMAIN_PATTERN: z.string().optional(),
-    APL: z.enum(["saleor-cloud", "file"]).optional().default("file"),
+    APL: z.enum(["saleor-cloud", "file", "redis"]).optional().default("file"),
+    REDIS_URL: z.string().url().optional(),
     APP_API_BASE_URL: z.string().optional(),
     APP_IFRAME_BASE_URL: z.string().optional(),
     APP_LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
@@ -74,6 +75,7 @@ export const env = createEnv({
     // App configuration
     ALLOWED_DOMAIN_PATTERN: process.env.ALLOWED_DOMAIN_PATTERN,
     APL: process.env.APL,
+    REDIS_URL: process.env.REDIS_URL,
     APP_API_BASE_URL: process.env.APP_API_BASE_URL,
     APP_IFRAME_BASE_URL: process.env.APP_IFRAME_BASE_URL,
     APP_LOG_LEVEL: process.env.APP_LOG_LEVEL,
