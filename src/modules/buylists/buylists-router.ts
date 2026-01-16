@@ -603,56 +603,12 @@ export const buylistsRouter = router({
         });
       }
 
-      // Create cost layer events for each line (BUYLIST_RECEIPT)
-      // This tracks the cost of inventory received from the buylist
-      for (const line of newBuylist.lines) {
-        // Get current inventory state for WAC calculation
-        const lastEvent = await tx.costLayerEvent.findFirst({
-          where: {
-            installationId: ctx.installationId,
-            saleorVariantId: line.saleorVariantId,
-            saleorWarehouseId: input.saleorWarehouseId,
-          },
-          orderBy: { eventTimestamp: "desc" },
-          select: {
-            id: true,
-            qtyOnHandAtEvent: true,
-            wacAtEvent: true,
-            totalValueAtEvent: true,
-          },
-        });
+      // NOTE: Cost layer events are NOT created here.
+      // They are created in BOH verifyAndReceive when cards are actually verified and received.
+      // This prevents duplicate cost events and ensures WAC is only updated when inventory
+      // is actually added (after verification, not at time of payment).
 
-        // Calculate new WAC using the buylist line price as cost
-        const currentQty = lastEvent?.qtyOnHandAtEvent ?? 0;
-        const currentValue = lastEvent?.totalValueAtEvent
-          ? new Decimal(lastEvent.totalValueAtEvent.toString())
-          : new Decimal(0);
-
-        // Add new inventory at buylist price
-        const newValue = currentValue.plus(line.finalPrice.times(line.qty));
-        const newQty = currentQty + line.qty;
-        const newWac = newQty > 0 ? newValue.div(newQty) : new Decimal(0);
-
-        // Create cost layer event
-        await tx.costLayerEvent.create({
-          data: {
-            installationId: ctx.installationId,
-            eventType: "BUYLIST_RECEIPT",
-            saleorVariantId: line.saleorVariantId,
-            saleorWarehouseId: input.saleorWarehouseId,
-            qtyDelta: line.qty,
-            unitCost: line.finalPrice,
-            currency: input.currency,
-            wacAtEvent: newWac,
-            qtyOnHandAtEvent: newQty,
-            totalValueAtEvent: newValue,
-            eventTimestamp: now,
-            sourceBuylistLineId: line.id,
-          },
-        });
-      }
-
-      logger.info("Cost layer events created for buylist", {
+      logger.info("Buylist created and paid, pending BOH verification", {
         buylistId: newBuylist.id,
         buylistNumber,
         lineCount: newBuylist.lines.length,
