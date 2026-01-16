@@ -42,6 +42,11 @@ ENV NEXT_PUBLIC_BASE_PATH=${BASE_PATH}
 
 COPY --from=deps /app ./
 
+# Write BASE_PATH to .env file for Next.js to read during build
+# This ensures basePath is baked into the static assets
+RUN echo "BASE_PATH=${BASE_PATH}" > /app/apps/buylist/.env && \
+    echo "NEXT_PUBLIC_BASE_PATH=${BASE_PATH}" >> /app/apps/buylist/.env
+
 # Build the app and its dependencies
 ENV SKIP_ENV_VALIDATION=true
 RUN pnpm turbo run build --filter=saleor-app-buylist
