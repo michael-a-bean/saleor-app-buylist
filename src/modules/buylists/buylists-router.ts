@@ -1091,6 +1091,11 @@ export const buylistsRouter = router({
           id: input.id,
           installationId: ctx.installationId,
         },
+        include: {
+          payouts: {
+            where: { status: "COMPLETED" },
+          },
+        },
       });
 
       if (!buylist) {
@@ -1104,6 +1109,14 @@ export const buylistsRouter = router({
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "Cannot cancel completed buylists",
+        });
+      }
+
+      // Block cancellation after payout has been made
+      if (buylist.payouts.length > 0 || buylist.paidAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Cannot cancel buylist after payout. Use 'void' operation to reverse.",
         });
       }
 
