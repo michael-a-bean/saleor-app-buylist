@@ -43,8 +43,10 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
 
   const pricingItems = [
     { href: "/pricing/policies", label: "Pricing Policies" },
-    // TODO: Price History page not yet implemented
-    // { href: "/pricing/history", label: "Price History" },
+    /*
+     * TODO: Price History page not yet implemented
+     * { href: "/pricing/history", label: "Price History" },
+     */
   ];
 
   return (

@@ -4,16 +4,16 @@
  * Comprehensive tests for the main pricing rule engine orchestrator.
  * Tests the complete flow from policy + rules to final calculated price.
  */
+import type { BuylistPricingPolicy, PricingRule as PrismaPricingRule } from "@prisma/client";
 import {
   PricingPolicyType,
   PricingRuleActionType,
   RuleStackingMode,
 } from "@prisma/client";
-import type { BuylistPricingPolicy, PricingRule as PrismaPricingRule } from "@prisma/client";
 import { Decimal } from "decimal.js";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach,beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RuleEngine, DEFAULT_CONDITION_MULTIPLIERS } from "./rule-engine";
+import { DEFAULT_CONDITION_MULTIPLIERS,RuleEngine } from "./rule-engine";
 import type { ProductAttributes } from "./types";
 
 describe("RuleEngine", () => {
@@ -90,8 +90,10 @@ describe("RuleEngine", () => {
           condition: "NM",
         });
 
-        // 50% of $100 = $50 base offer
-        // NM condition = 1.0 multiplier
+        /*
+         * 50% of $100 = $50 base offer
+         * NM condition = 1.0 multiplier
+         */
         expect(result.baseOffer).toBe(50);
         expect(result.offerAfterCondition).toBe(50);
       });
@@ -410,9 +412,11 @@ describe("RuleEngine", () => {
         attributes: createAttributes(),
       });
 
-      // Base: 50% of $100 = $50
-      // Rule 1 (+10%): $50 × 1.10 = $55
-      // Rule 2 (+5%): $55 × 1.05 = $57.75
+      /*
+       * Base: 50% of $100 = $50
+       * Rule 1 (+10%): $50 × 1.10 = $55
+       * Rule 2 (+5%): $55 × 1.05 = $57.75
+       */
       expect(result.appliedRules).toHaveLength(2);
       expect(result.appliedRules[0].ruleName).toBe("First Rule");
       expect(result.appliedRules[1].ruleName).toBe("Second Rule");
@@ -758,13 +762,15 @@ describe("RuleEngine", () => {
         }),
       });
 
-      // Step by step:
-      // 1. Base: 60% of $75 = $45
-      // 2. LP condition: $45 × 0.85 = $38.25
-      // 3. MH3 Premium (+15%): $38.25 × 1.15 = $43.9875
-      // 4. Mythic Bonus (+10%): $43.9875 × 1.10 = $48.38625
-      // 5. Foil Premium (+$2): $48.38625 + $2 = $50.38625
-      // 6. Rounded: $50.39
+      /*
+       * Step by step:
+       * 1. Base: 60% of $75 = $45
+       * 2. LP condition: $45 × 0.85 = $38.25
+       * 3. MH3 Premium (+15%): $38.25 × 1.15 = $43.9875
+       * 4. Mythic Bonus (+10%): $43.9875 × 1.10 = $48.38625
+       * 5. Foil Premium (+$2): $48.38625 + $2 = $50.38625
+       * 6. Rounded: $50.39
+       */
 
       expect(result.policyId).toBe(policy.id);
       expect(result.marketPrice).toBe(75);

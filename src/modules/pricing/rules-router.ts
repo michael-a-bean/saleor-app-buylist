@@ -11,16 +11,19 @@ import { z } from "zod";
 
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+
 import {
   conditionEvaluator,
-  ruleEngine,
   type PricingRuleConditionGroup,
   type ProductAttributes,
+  ruleEngine,
 } from "./rule-engine";
 
-// ============================================================================
-// SCHEMAS
-// ============================================================================
+/*
+ * ============================================================================
+ * SCHEMAS
+ * ============================================================================
+ */
 
 /**
  * Schema for a single condition
@@ -101,9 +104,11 @@ const listRulesSchema = z.object({
   offset: z.number().min(0).optional().default(0),
 });
 
-// ============================================================================
-// ROUTER
-// ============================================================================
+/*
+ * ============================================================================
+ * ROUTER
+ * ============================================================================
+ */
 
 export const rulesRouter = router({
   /**

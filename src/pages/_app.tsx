@@ -1,5 +1,19 @@
 import "@saleor/macaw-ui/style";
 
+import { AppBridge, AppBridgeProvider } from "@saleor/app-sdk/app-bridge";
+import { RoutePropagator } from "@saleor/app-sdk/app-bridge/next";
+import { GraphQLProvider } from "@saleor/apps-shared/graphql-provider";
+import { IframeProtectedFallback } from "@saleor/apps-shared/iframe-protected-fallback";
+import { IframeProtectedWrapper } from "@saleor/apps-shared/iframe-protected-wrapper";
+import { NoSSRWrapper } from "@saleor/apps-shared/no-ssr-wrapper";
+import { ThemeSynchronizer } from "@saleor/apps-shared/theme-synchronizer";
+import { Box, ThemeProvider } from "@saleor/macaw-ui";
+import { AppProps } from "next/app";
+
+import { trpcClient } from "@/modules/trpc/trpc-client";
+import { AppLayout } from "@/ui/components/app-layout";
+import { ToastProvider } from "@/ui/components/Toast";
+
 /**
  * Polyfill for crypto.randomUUID() in non-secure contexts (HTTP).
  *
@@ -19,20 +33,6 @@ if (typeof window !== "undefined" && typeof crypto !== "undefined" && !crypto.ra
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as `${string}-${string}-${string}-${string}-${string}`;
   };
 }
-
-import { AppBridge, AppBridgeProvider } from "@saleor/app-sdk/app-bridge";
-import { RoutePropagator } from "@saleor/app-sdk/app-bridge/next";
-import { GraphQLProvider } from "@saleor/apps-shared/graphql-provider";
-import { IframeProtectedFallback } from "@saleor/apps-shared/iframe-protected-fallback";
-import { IframeProtectedWrapper } from "@saleor/apps-shared/iframe-protected-wrapper";
-import { NoSSRWrapper } from "@saleor/apps-shared/no-ssr-wrapper";
-import { ThemeSynchronizer } from "@saleor/apps-shared/theme-synchronizer";
-import { Box, ThemeProvider } from "@saleor/macaw-ui";
-import { AppProps } from "next/app";
-
-import { trpcClient } from "@/modules/trpc/trpc-client";
-import { AppLayout } from "@/ui/components/app-layout";
-import { ToastProvider } from "@/ui/components/Toast";
 
 /**
  * Ensure instance is a singleton.

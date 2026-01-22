@@ -4,7 +4,7 @@
  * Tests for rule matching, time-based activation, and priority ordering.
  */
 import { PricingRuleActionType, RuleStackingMode } from "@prisma/client";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach,beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RuleMatcher } from "./rule-matcher";
 import type { PricingRule, RuleEvaluationContext } from "./types";

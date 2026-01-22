@@ -41,4 +41,33 @@ export default [
       "no-console": "off",
     },
   },
+  {
+    name: "saleor-app-buylist/relaxed-test-rules",
+    files: ["**/*.test.ts", "**/*.test.tsx"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "warn",
+      "vitest/prefer-strict-equal": "warn",
+    },
+  },
+  {
+    name: "saleor-app-buylist/relaxed-rules",
+    files: ["**/*.ts", "**/*.tsx"],
+    rules: {
+      "@saleor/saleor-app/logger-leak": "warn",
+      "@typescript-eslint/max-params": "off",
+      "react-naming-convention/filename": "off",
+      "react/prop-types": "off",
+    },
+  },
+  {
+    name: "saleor-app-buylist/ignore-graphql-schema",
+    ignores: ["graphql/**/*.graphql"],
+  },
+  {
+    name: "saleor-app-buylist/allow-default-export",
+    files: ["src/ui/components/**/*.tsx"],
+    rules: {
+      "import/no-default-export": "off",
+    },
+  },
 ];

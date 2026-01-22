@@ -67,8 +67,10 @@ describe("RuleStacker", () => {
         ],
       });
 
-      // $30 × 1.10 = $33
-      // $33 × 1.05 = $34.65
+      /*
+       * $30 × 1.10 = $33
+       * $33 × 1.05 = $34.65
+       */
       expect(result.finalOffer).toBe(34.65);
       expect(result.appliedRules).toHaveLength(2);
       expect(result.appliedRules[0].offerAfter).toBe(33);
@@ -131,9 +133,11 @@ describe("RuleStacker", () => {
         ],
       });
 
-      // $30 + ($30 × 0.10) = $33
-      // $33 + ($30 × 0.05) = $33 + $1.50 = $34.50
-      // Note: Both use baseOffer ($30), not the current offer
+      /*
+       * $30 + ($30 × 0.10) = $33
+       * $33 + ($30 × 0.05) = $33 + $1.50 = $34.50
+       * Note: Both use baseOffer ($30), not the current offer
+       */
       expect(result.finalOffer).toBe(34.5);
     });
   });
@@ -161,8 +165,10 @@ describe("RuleStacker", () => {
         ],
       });
 
-      // $30 × 1.10 = $33 (multiplicative)
-      // $33 + ($30 × 0.05) = $33 + $1.50 = $34.50 (additive)
+      /*
+       * $30 × 1.10 = $33 (multiplicative)
+       * $33 + ($30 × 0.05) = $33 + $1.50 = $34.50 (additive)
+       */
       expect(result.finalOffer).toBe(34.5);
     });
   });

@@ -1,5 +1,4 @@
 import { TRPCError } from "@trpc/server";
-import { Decimal } from "decimal.js";
 import { z } from "zod";
 
 import { extractUserFromToken } from "@/lib/jwt-utils";

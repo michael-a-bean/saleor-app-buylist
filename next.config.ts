@@ -1,7 +1,9 @@
 import { NextConfig } from "next";
 
-// Support BASE_PATH from environment for path-based ALB routing
-// e.g., BASE_PATH=/apps/buylist for staging deployment
+/*
+ * Support BASE_PATH from environment for path-based ALB routing
+ * e.g., BASE_PATH=/apps/buylist for staging deployment
+ */
 const basePath = process.env.BASE_PATH || "";
 
 const nextConfig: NextConfig = {

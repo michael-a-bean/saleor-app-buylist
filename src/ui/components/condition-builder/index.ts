@@ -9,12 +9,12 @@ export { ConditionGroup } from "./ConditionGroup";
 export { ConditionRow } from "./ConditionRow";
 export {
   CONDITION_FIELDS,
+  type ConditionFieldDefinition,
   createEmptyCondition,
   createEmptyGroup,
   getFieldDefinition,
   getOperatorsForField,
   isConditionGroup,
-  OPERATORS_BY_TYPE,
-  type ConditionFieldDefinition,
   type OperatorDefinition,
+  OPERATORS_BY_TYPE,
 } from "./types";

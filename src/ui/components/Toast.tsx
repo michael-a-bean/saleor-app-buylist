@@ -1,5 +1,5 @@
 import { Box, Text } from "@saleor/macaw-ui";
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, ReactNode,useCallback, useContext, useEffect, useState } from "react";
 
 type ToastType = "success" | "error" | "warning" | "info";
 

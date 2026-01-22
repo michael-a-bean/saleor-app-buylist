@@ -6,9 +6,10 @@ import { createInstrumentedGraphqlClient } from "@/lib/graphql-client";
 import { saleorApp } from "@/lib/saleor-app";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
+
 import { AttributeCacheService } from "./attribute-cache";
 import { attributesRouter } from "./attributes-router";
-import { ruleEngine, type ProductAttributes } from "./rule-engine";
+import { type ProductAttributes,ruleEngine } from "./rule-engine";
 import { rulesRouter } from "./rules-router";
 
 // Condition multiplier schema
@@ -445,8 +446,10 @@ export const pricingRouter = router({
         });
       }
 
-      // Build product attributes for rule evaluation
-      // First, try to get cached attributes if variantId is provided and useCachedAttributes is true
+      /*
+       * Build product attributes for rule evaluation
+       * First, try to get cached attributes if variantId is provided and useCachedAttributes is true
+       */
       let cachedAttrs: Record<string, unknown> = {};
       let cachedQtyOnHand: number | undefined;
 
@@ -594,7 +597,7 @@ export const pricingRouter = router({
 
       // Batch fetch cached attributes if enabled
       type CachedAttrMap = Map<string, { attrs: Record<string, unknown>; qtyOnHand?: number }>;
-      let cachedAttrsMap: CachedAttrMap = new Map();
+      const cachedAttrsMap: CachedAttrMap = new Map();
 
       if (input.useCachedAttributes) {
         try {

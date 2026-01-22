@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, prefer-const */
+import type { BuylistPricingPolicy, PricingRule as PrismaPricingRule } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";
-
-import type { BuylistPricingPolicy, PricingRule as PrismaPricingRule } from "@prisma/client";
 
 import { extractUserFromToken } from "@/lib/jwt-utils";
 import { createLogger } from "@/lib/logger";
@@ -603,10 +602,12 @@ export const buylistsRouter = router({
         });
       }
 
-      // NOTE: Cost layer events are NOT created here.
-      // They are created in BOH verifyAndReceive when cards are actually verified and received.
-      // This prevents duplicate cost events and ensures WAC is only updated when inventory
-      // is actually added (after verification, not at time of payment).
+      /*
+       * NOTE: Cost layer events are NOT created here.
+       * They are created in BOH verifyAndReceive when cards are actually verified and received.
+       * This prevents duplicate cost events and ensures WAC is only updated when inventory
+       * is actually added (after verification, not at time of payment).
+       */
 
       logger.info("Buylist created and paid, pending BOH verification", {
         buylistId: newBuylist.id,
@@ -1234,8 +1235,10 @@ function calculateLinePrice(
       productId: options?.productId ?? "",
       categoryId: options?.categoryId,
     },
-    // Note: Inventory data not available in this context
-    // For inventory-based rules, the pricing.calculatePrice tRPC endpoint should be used
+    /*
+     * Note: Inventory data not available in this context
+     * For inventory-based rules, the pricing.calculatePrice tRPC endpoint should be used
+     */
   });
 
   return {

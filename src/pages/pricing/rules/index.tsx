@@ -11,7 +11,7 @@ import { useCallback, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 
-const ACTION_TYPE_LABELS: Record<string, string> = {
+const _ACTION_TYPE_LABELS: Record<string, string> = {
   PERCENTAGE_MODIFIER: "% modifier",
   FIXED_MODIFIER: "$ modifier",
   SET_PERCENTAGE: "set to %",

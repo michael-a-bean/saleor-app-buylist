@@ -11,7 +11,7 @@
  * - Idempotency handling
  */
 import { Decimal } from "decimal.js";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach,beforeEach, describe, expect, it, vi } from "vitest";
 
 // ==================== Type Definitions ====================
 
@@ -1021,8 +1021,10 @@ describe("createAndPay Edge Cases", () => {
 describe("createAndPay Transaction Integrity", () => {
   describe("Atomic Operations", () => {
     it("should create buylist, payout, and events in same transaction", () => {
-      // This test documents the expected transactional behavior
-      // In actual implementation, all operations are wrapped in prisma.$transaction
+      /*
+       * This test documents the expected transactional behavior
+       * In actual implementation, all operations are wrapped in prisma.$transaction
+       */
 
       const operations = [
         "create buylist",
@@ -1049,8 +1051,10 @@ describe("createAndPay Transaction Integrity", () => {
     });
 
     it("should document rollback on database error", () => {
-      // Any database error should cause full rollback
-      // This ensures no partial buylists are created
+      /*
+       * Any database error should cause full rollback
+       * This ensures no partial buylists are created
+       */
       const transactionBehavior = "atomic";
 
       expect(transactionBehavior).toBe("atomic");

@@ -13,9 +13,11 @@
 import type { PricingRuleActionType, RuleStackingMode } from "@prisma/client";
 import type { Decimal } from "decimal.js";
 
-// ============================================================================
-// CONDITION TYPES
-// ============================================================================
+/*
+ * ============================================================================
+ * CONDITION TYPES
+ * ============================================================================
+ */
 
 /**
  * Types of conditions that can be evaluated
@@ -75,9 +77,11 @@ export function isConditionGroup(
   return "operator" in condition && ("AND" === condition.operator || "OR" === condition.operator);
 }
 
-// ============================================================================
-// EVALUATION CONTEXT
-// ============================================================================
+/*
+ * ============================================================================
+ * EVALUATION CONTEXT
+ * ============================================================================
+ */
 
 /**
  * Product attributes available for rule evaluation
@@ -107,10 +111,12 @@ export interface ProductAttributes {
  */
 export interface InventoryData {
   qtyOnHand: number;
-  // Future expansion:
-  // avgDailySales?: number;
-  // daysOfStock?: number;
-  // priceTrend?: 'UP' | 'DOWN' | 'STABLE';
+  /*
+   * Future expansion:
+   * avgDailySales?: number;
+   * daysOfStock?: number;
+   * priceTrend?: 'UP' | 'DOWN' | 'STABLE';
+   */
 }
 
 /**
@@ -147,9 +153,11 @@ export interface RuleEvaluationContext {
   time?: TimeContext;
 }
 
-// ============================================================================
-// RULE TYPES
-// ============================================================================
+/*
+ * ============================================================================
+ * RULE TYPES
+ * ============================================================================
+ */
 
 /**
  * A pricing rule with its conditions and action
@@ -185,9 +193,11 @@ export interface RuleApplicationResult {
   offerAfter: number;
 }
 
-// ============================================================================
-// RULE ENGINE OUTPUT
-// ============================================================================
+/*
+ * ============================================================================
+ * RULE ENGINE OUTPUT
+ * ============================================================================
+ */
 
 /**
  * Complete result of price calculation with rule breakdown
@@ -220,9 +230,11 @@ export interface PriceCalculationResult {
   };
 }
 
-// ============================================================================
-// VALIDATION
-// ============================================================================
+/*
+ * ============================================================================
+ * VALIDATION
+ * ============================================================================
+ */
 
 /**
  * Result of validating a condition structure
@@ -292,9 +304,11 @@ export const SUPPORTED_OPERATORS: Record<ConditionType, ComparisonOperator[]> = 
   CATEGORY: ["EQUALS", "NOT_EQUALS", "IN", "NOT_IN"],
 };
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
+/*
+ * ============================================================================
+ * HELPER FUNCTIONS
+ * ============================================================================
+ */
 
 /**
  * Options for creating a time context

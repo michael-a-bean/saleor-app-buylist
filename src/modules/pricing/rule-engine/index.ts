@@ -23,8 +23,8 @@ export {
 
 // Main engine
 export {
+  type CalculatePriceInput,
+  DEFAULT_CONDITION_MULTIPLIERS,
   RuleEngine,
   ruleEngine,
-  DEFAULT_CONDITION_MULTIPLIERS,
-  type CalculatePriceInput,
 } from "./rule-engine";
