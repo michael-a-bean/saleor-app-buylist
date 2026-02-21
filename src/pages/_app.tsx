@@ -1,7 +1,7 @@
 import "@saleor/macaw-ui/style";
 
 import { AppBridge, AppBridgeProvider } from "@saleor/app-sdk/app-bridge";
-import { RoutePropagator } from "@saleor/app-sdk/app-bridge/next";
+import { RoutePropagator } from "@saleor/apps-shared/route-propagator";
 import { GraphQLProvider } from "@saleor/apps-shared/graphql-provider";
 import { IframeProtectedFallback } from "@saleor/apps-shared/iframe-protected-fallback";
 import { IframeProtectedWrapper } from "@saleor/apps-shared/iframe-protected-wrapper";
