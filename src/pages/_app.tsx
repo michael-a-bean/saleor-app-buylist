@@ -1,4 +1,5 @@
 import "@saleor/macaw-ui/style";
+import "@/ui/styles/globals.css";
 
 import { AppBridge, AppBridgeProvider } from "@saleor/app-sdk/app-bridge";
 import { RoutePropagator } from "@saleor/app-sdk/app-bridge/next";

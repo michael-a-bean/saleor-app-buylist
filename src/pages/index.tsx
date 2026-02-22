@@ -2,6 +2,7 @@ import { Box, Button, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { InlineSpinner } from "@/ui/components";
 
 export default function IndexPage() {
   const router = useRouter();
@@ -18,9 +19,7 @@ export default function IndexPage() {
         </Text>
       </Box>
 
-      {healthQuery.isLoading && (
-        <Text color="default2">Checking connection...</Text>
-      )}
+      {healthQuery.isLoading && <InlineSpinner label="Checking connection..." />}
 
       {healthQuery.isError && (
         <Box
@@ -57,6 +56,9 @@ export default function IndexPage() {
           flexDirection="column"
           gap={4}
           __minWidth="280px"
+          className="data-table-row"
+          cursor="pointer"
+          onClick={() => router.push("/buylists")}
         >
           <Text as="h2" size={6} fontWeight="bold">
             Front of House
@@ -65,7 +67,10 @@ export default function IndexPage() {
             Create buylists, grade cards, generate quotes, and record payouts.
           </Text>
           <Button
-            onClick={() => router.push("/buylists")}
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push("/buylists");
+            }}
             variant="primary"
           >
             View Buylists
@@ -82,6 +87,9 @@ export default function IndexPage() {
           flexDirection="column"
           gap={4}
           __minWidth="280px"
+          className="data-table-row"
+          cursor="pointer"
+          onClick={() => router.push("/boh/queue")}
         >
           <Text as="h2" size={6} fontWeight="bold">
             Back of House
@@ -90,7 +98,10 @@ export default function IndexPage() {
             Review pending buylists, adjust quantities, and receive into inventory.
           </Text>
           <Button
-            onClick={() => router.push("/boh/queue")}
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push("/boh/queue");
+            }}
             variant="secondary"
           >
             BOH Queue
@@ -107,6 +118,9 @@ export default function IndexPage() {
           flexDirection="column"
           gap={4}
           __minWidth="280px"
+          className="data-table-row"
+          cursor="pointer"
+          onClick={() => router.push("/pricing/policies")}
         >
           <Text as="h2" size={6} fontWeight="bold">
             Pricing
@@ -115,7 +129,10 @@ export default function IndexPage() {
             Configure pricing policies and view price history.
           </Text>
           <Button
-            onClick={() => router.push("/pricing/policies")}
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push("/pricing/policies");
+            }}
             variant="tertiary"
           >
             Manage Policies

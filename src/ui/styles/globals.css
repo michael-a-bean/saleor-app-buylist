@@ -1,0 +1,22 @@
+/* Data table hover effects */
+.data-table-row:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-macaw-ui-theme="defaultDark"] .data-table-row:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Smooth transitions for interactive elements */
+.data-table-row {
+  transition: background-color 0.15s ease;
+}
+
+/* Nav item hover */
+.nav-item:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-macaw-ui-theme="defaultDark"] .nav-item:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}

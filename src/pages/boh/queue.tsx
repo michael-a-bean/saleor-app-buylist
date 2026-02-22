@@ -1,8 +1,9 @@
-import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
+import { Box, Button, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { DataTable, InlineSpinner, StatBox, TableSkeleton } from "@/ui/components";
 
 export default function BOHQueuePage() {
   const router = useRouter();
@@ -78,27 +79,29 @@ export default function BOHQueuePage() {
       </Box>
 
       {/* Stats */}
-      {statsQuery.data && (
-        <Box display="flex" gap={4} flexWrap="wrap">
-          <StatCard
+      {statsQuery.isLoading ? (
+        <InlineSpinner label="Loading stats..." />
+      ) : statsQuery.data ? (
+        <Box display="flex" gap={6} flexWrap="wrap">
+          <StatBox
             label="Pending Verification"
             value={statsQuery.data.pendingVerification.toString()}
-            highlight
+            color="info1"
           />
-          <StatCard
+          <StatBox
             label="Verified Today"
             value={statsQuery.data.todayVerified.toString()}
           />
-          <StatCard
+          <StatBox
             label="Today's Value"
             value={`$${Number(statsQuery.data.todayVerifiedValue).toFixed(2)}`}
           />
-          <StatCard
+          <StatBox
             label="Cards Received"
             value={statsQuery.data.todayVerifiedQty.toString()}
           />
         </Box>
-      )}
+      ) : null}
 
       {/* Queue Header */}
       <Box
@@ -114,11 +117,7 @@ export default function BOHQueuePage() {
 
       {/* Queue List */}
       {queueQuery.isLoading ? (
-        <Box display="flex" flexDirection="column" gap={2}>
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} style={{ width: "100%", height: 80 }} />
-          ))}
-        </Box>
+        <TableSkeleton rows={3} />
       ) : queueQuery.isError ? (
         <Box padding={4} backgroundColor="critical1" borderRadius={4}>
           <Text color="critical1">Error: {queueQuery.error.message}</Text>
@@ -133,98 +132,70 @@ export default function BOHQueuePage() {
           </Text>
         </Box>
       ) : (
-        <Box
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          borderRadius={4}
-          overflow="hidden"
-        >
-          {/* Header */}
-          <Box
-            display="grid"
-            __gridTemplateColumns="1fr 100px 100px 150px 120px"
-            gap={3}
-            padding={4}
-            backgroundColor="default1"
-            alignItems="center"
-          >
-            <Text fontWeight="bold">Buylist</Text>
-            <Text fontWeight="bold">Items</Text>
-            <Text fontWeight="bold">Total Paid</Text>
-            <Text fontWeight="bold">Paid At</Text>
-            <Box />
-          </Box>
-
-          {queueQuery.data?.buylists.map((buylist) => (
-            <Box
-              key={buylist.id}
-              display="grid"
-              __gridTemplateColumns="1fr 100px 100px 150px 120px"
-              gap={3}
-              padding={4}
-              borderTopWidth={1}
-              borderTopStyle="solid"
-              borderColor="default1"
-              alignItems="center"
-              cursor="pointer"
-              onClick={() => router.push(`/boh/buylists/${buylist.id}/verify`)}
-            >
-              <Box display="flex" flexDirection="column" gap={1}>
-                <Text fontWeight="bold">{buylist.buylistNumber}</Text>
-                <Text color="default2" size={2}>
-                  {buylist.customerName || buylist.customerEmail || "Walk-in Customer"}
+        <DataTable
+          columns={[
+            {
+              header: "Buylist",
+              render: (row) => (
+                <Box display="flex" flexDirection="column" gap={1}>
+                  <Text fontWeight="bold">{row.buylistNumber}</Text>
+                  <Text color="default2" size={2}>
+                    {row.customerName || row.customerEmail || "Walk-in Customer"}
+                  </Text>
+                </Box>
+              ),
+            },
+            {
+              header: "Items",
+              align: "right",
+              render: (row) => <Text>{row._count.lines} cards</Text>,
+            },
+            {
+              header: "Total Paid",
+              align: "right",
+              render: (row) => (
+                <Text fontWeight="bold" color="success1">
+                  ${Number(row.totalQuotedAmount).toFixed(2)}
                 </Text>
-              </Box>
-              <Text>{buylist._count.lines} cards</Text>
-              <Text fontWeight="bold" color="success1">
-                ${Number(buylist.totalQuotedAmount).toFixed(2)}
-              </Text>
-              <Text color="default2" size={2}>
-                {buylist.paidAt
-                  ? new Date(buylist.paidAt).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })
-                  : "N/A"}
-              </Text>
-              <Button
-                variant="primary"
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  router.push(`/boh/buylists/${buylist.id}/verify`);
-                }}
-              >
-                Verify
-              </Button>
-            </Box>
-          ))}
-        </Box>
+              ),
+            },
+            {
+              header: "Paid At",
+              render: (row) => (
+                <Text color="default2" size={2}>
+                  {row.paidAt
+                    ? new Date(row.paidAt).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })
+                    : "N/A"}
+                </Text>
+              ),
+            },
+            {
+              header: "",
+              align: "right",
+              render: (row) => (
+                <Button
+                  variant="primary"
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/boh/buylists/${row.id}/verify`);
+                  }}
+                >
+                  Verify
+                </Button>
+              ),
+            },
+          ]}
+          data={queueQuery.data?.buylists ?? []}
+          rowKey={(row) => row.id}
+          onRowClick={(row) => router.push(`/boh/buylists/${row.id}/verify`)}
+        />
       )}
-    </Box>
-  );
-}
-
-function StatCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <Box
-      padding={4}
-      borderRadius={4}
-      borderWidth={1}
-      borderStyle="solid"
-      borderColor={highlight ? "info1" : "default1"}
-      backgroundColor={highlight ? "info1" : "transparent"}
-      __minWidth="140px"
-    >
-      <Text size={2} color="default2">
-        {label}
-      </Text>
-      <Text size={6} fontWeight="bold">
-        {value}
-      </Text>
     </Box>
   );
 }
