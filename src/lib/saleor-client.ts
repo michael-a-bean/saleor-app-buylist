@@ -524,10 +524,11 @@ export class SaleorClient {
   /**
    * Get the condition-specific variant ID for a given base variant and condition.
    *
-   * MTG variants follow SKU pattern: {baseId}-{condition}
-   * e.g., "abc123-NM", "abc123-LP", "abc123-MP", "abc123-HP", "abc123-DMG"
+   * MTG variants follow SKU pattern: {prefix}-{condition}-{finish}
+   * where prefix is a Scryfall UUID (full or 8-char), condition is NM/LP/MP/HP/DMG,
+   * and finish is NF/F/E. This matches mtg-import's generateSku() format.
    *
-   * @param baseVariantSku - The SKU of any variant for this card (usually NM)
+   * @param baseVariantSku - The SKU of any variant for this card (e.g., "ff1b8fc5-NM-NF")
    * @param condition - The target condition (NM, LP, MP, HP, DMG)
    * @returns The variant ID for the condition-specific variant, or null if not found
    */
@@ -535,19 +536,50 @@ export class SaleorClient {
     baseVariantSku: string,
     condition: "NM" | "LP" | "MP" | "HP" | "DMG"
   ): Promise<string | null> {
-    // Extract base SKU by removing any existing condition suffix
-    const conditionSuffixes = ["-NM", "-LP", "-MP", "-HP", "-DMG"];
-    let baseSku = baseVariantSku;
-    for (const suffix of conditionSuffixes) {
-      if (baseSku.toUpperCase().endsWith(suffix)) {
-        baseSku = baseSku.slice(0, -suffix.length);
-        break;
-      }
+    const FINISH_CODES = ["NF", "F", "E"];
+    const CONDITION_CODES = ["NM", "LP", "MP", "HP", "DMG"];
+
+    // Parse SKU from the right: last segment = finish, second-to-last = condition, rest = prefix
+    const parts = baseVariantSku.split("-");
+    if (parts.length < 3) {
+      logger.error("SKU format invalid: expected {prefix}-{condition}-{finish}", {
+        sku: baseVariantSku,
+      });
+      return null;
     }
 
-    // Build target SKU with condition
-    const targetSku = `${baseSku}-${condition}`;
-    logger.debug("Looking up condition variant", { baseVariantSku, baseSku, targetSku, condition });
+    const finish = parts[parts.length - 1];
+    const existingCondition = parts[parts.length - 2];
+    const prefix = parts.slice(0, -2).join("-");
+
+    if (!FINISH_CODES.includes(finish.toUpperCase())) {
+      logger.error("SKU has unrecognized finish code", {
+        sku: baseVariantSku,
+        finish,
+        expected: FINISH_CODES,
+      });
+      return null;
+    }
+
+    if (!CONDITION_CODES.includes(existingCondition.toUpperCase())) {
+      logger.error("SKU has unrecognized condition code", {
+        sku: baseVariantSku,
+        condition: existingCondition,
+        expected: CONDITION_CODES,
+      });
+      return null;
+    }
+
+    // Build target SKU: same prefix + new condition + same finish
+    const targetSku = `${prefix}-${condition}-${finish}`;
+    logger.debug("Looking up condition variant", {
+      baseVariantSku,
+      prefix,
+      existingCondition,
+      finish,
+      targetSku,
+      condition,
+    });
 
     const variant = await this.getVariantBySku(targetSku);
     if (variant) {
