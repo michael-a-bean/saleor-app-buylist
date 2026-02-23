@@ -93,7 +93,7 @@ const GET_VARIANT_BY_ID_QUERY = gql`
 
 const GET_VARIANT_BY_SKU_QUERY = gql`
   query GetVariantBySku($sku: String!, $channel: String!) {
-    productVariants(first: 1, filter: { sku: $sku }, channel: $channel) {
+    productVariants(first: 1, filter: { sku: [$sku] }, channel: $channel) {
       edges {
         node {
           id

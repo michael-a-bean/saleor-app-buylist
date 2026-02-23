@@ -64,7 +64,7 @@ const GET_VARIANT_FULL_QUERY = gql`
  */
 const GET_VARIANTS_BULK_QUERY = gql`
   query GetVariantsBulk($ids: [ID!]!, $channel: String!) {
-    productVariants(first: 100, filter: { ids: $ids }, channel: $channel) {
+    productVariants(first: 100, ids: $ids, channel: $channel) {
       edges {
         node {
           id
