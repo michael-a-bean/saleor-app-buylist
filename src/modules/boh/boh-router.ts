@@ -183,8 +183,8 @@ export const bohRouter = router({
 
         totalReceivedQty += qtyAccepted;
 
-        // Look up the correct condition-specific variant for stock
-        // The stored variant may be NM but we need to add stock to the actual condition variant
+        // Look up the correct condition-specific variant for stock and costing.
+        // This MUST resolve — fallback to base variant would corrupt WAC data.
         let actualVariantId = line.saleorVariantId;
         if (line.saleorVariantSku) {
           const conditionVariantId = await saleorClient.getConditionVariantId(
@@ -200,12 +200,25 @@ export const bohRouter = router({
               actualVariantId,
             });
           } else {
-            logger.warn("Could not find condition variant, using original", {
+            logger.error("Condition variant not found — cannot proceed without correct variant", {
               lineId: line.id,
               sku: line.saleorVariantSku,
               condition: finalCondition,
             });
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: `Condition variant not found for SKU ${line.saleorVariantSku} condition ${finalCondition}. ` +
+                `Cannot add stock/cost to wrong variant. Verify the variant exists in Saleor.`,
+            });
           }
+        } else {
+          logger.error("Buylist line missing saleorVariantSku — cannot resolve condition variant", {
+            lineId: line.id,
+          });
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Buylist line ${line.id} has no SKU. Cannot resolve condition-specific variant.`,
+          });
         }
 
         linesToProcess.push({ line, qtyAccepted, actualVariantId });
