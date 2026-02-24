@@ -347,6 +347,170 @@ export const bohRouter = router({
       };
     }),
 
+  /**
+   * Recondition a buylist line — move some qty from one condition to another.
+   * Creates or merges into an existing target line (price-aware: only merges if finalPrice matches).
+   * Source line qty is decremented; deleted if it reaches 0.
+   * Total qty across all lines is invariant.
+   */
+  reconditionLine: protectedClientProcedure
+    .input(
+      z.object({
+        buylistId: z.string().uuid(),
+        sourceLineId: z.string().uuid(),
+        targetCondition: conditionEnum,
+        qty: z.number().int().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { buylistId, sourceLineId, targetCondition, qty } = input;
+
+      return ctx.prisma.$transaction(async (tx) => {
+        // 1. Fetch buylist with lines
+        const buylist = await tx.buylist.findFirst({
+          where: { id: buylistId, installationId: ctx.installationId },
+          include: { lines: { orderBy: { lineNumber: "asc" } } },
+        });
+
+        if (!buylist) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Buylist not found" });
+        }
+
+        if (buylist.status !== "PENDING_VERIFICATION") {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Buylist must be pending verification to recondition lines",
+          });
+        }
+
+        // 2. Find source line
+        const sourceLine = buylist.lines.find((l) => l.id === sourceLineId);
+        if (!sourceLine) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Source line not found" });
+        }
+
+        if (qty > sourceLine.qty) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Cannot move ${qty} units — source line only has ${sourceLine.qty}`,
+          });
+        }
+
+        // 3. No-op guard: target must differ from source
+        if (targetCondition === sourceLine.condition) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Target condition is the same as source — nothing to recondition",
+          });
+        }
+
+        // 4. Derive target SKU from source SKU
+        let targetSku: string | null = null;
+        if (sourceLine.saleorVariantSku) {
+          const parts = sourceLine.saleorVariantSku.split("-");
+          if (parts.length >= 3) {
+            const finish = parts[parts.length - 1];
+            const prefix = parts.slice(0, -2).join("-");
+            targetSku = `${prefix}-${targetCondition}-${finish}`;
+          }
+        }
+
+        // 5. Find existing target line with same card identity + condition + same finalPrice
+        const existingTarget = buylist.lines.find((l) => {
+          if (l.id === sourceLineId) return false;
+          if (l.condition !== targetCondition) return false;
+          // Price-aware merge: must have identical finalPrice
+          if (!new Decimal(l.finalPrice.toString()).equals(new Decimal(sourceLine.finalPrice.toString()))) {
+            return false;
+          }
+          // Match by SKU if available
+          if (targetSku && l.saleorVariantSku === targetSku) return true;
+          // Fallback: match by variant name pattern (less precise)
+          if (!targetSku && l.saleorVariantName === sourceLine.saleorVariantName) return true;
+          return false;
+        });
+
+        let targetLineId: string;
+
+        if (existingTarget) {
+          // 6a. Merge into existing target line
+          await tx.buylistLine.update({
+            where: { id: existingTarget.id },
+            data: { qty: existingTarget.qty + qty },
+          });
+          targetLineId = existingTarget.id;
+        } else {
+          // 6b. Create new target line
+          const maxLineNumber = Math.max(...buylist.lines.map((l) => l.lineNumber));
+
+          const newLine = await tx.buylistLine.create({
+            data: {
+              buylistId,
+              saleorVariantId: sourceLine.saleorVariantId,
+              saleorVariantSku: targetSku ?? sourceLine.saleorVariantSku,
+              saleorVariantName: sourceLine.saleorVariantName,
+              qty,
+              condition: targetCondition,
+              marketPrice: sourceLine.marketPrice,
+              quotedPrice: sourceLine.quotedPrice,
+              finalPrice: sourceLine.finalPrice,
+              currency: sourceLine.currency,
+              lineNumber: maxLineNumber + 1,
+            },
+          });
+          targetLineId = newLine.id;
+        }
+
+        // 7. Decrement source line qty (delete if zero)
+        const newSourceQty = sourceLine.qty - qty;
+        if (newSourceQty === 0) {
+          await tx.buylistLine.delete({ where: { id: sourceLineId } });
+        } else {
+          await tx.buylistLine.update({
+            where: { id: sourceLineId },
+            data: { qty: newSourceQty },
+          });
+        }
+
+        // 8. Create audit event
+        const auditEvent = await tx.buylistAuditEvent.create({
+          data: {
+            buylistId,
+            action: "RECONDITIONED",
+            userId: getUserId(ctx),
+            metadata: {
+              sourceLineId,
+              targetLineId,
+              qty,
+              fromCondition: sourceLine.condition,
+              toCondition: targetCondition,
+              sourceLineOriginalQty: sourceLine.qty,
+              sourceSku: sourceLine.saleorVariantSku,
+            },
+          },
+        });
+
+        // 9. Fetch updated lines
+        const updatedLines = await tx.buylistLine.findMany({
+          where: { buylistId },
+          orderBy: { lineNumber: "asc" },
+        });
+
+        logger.info("Reconditioned buylist line", {
+          buylistId,
+          sourceLineId,
+          targetLineId,
+          qty,
+          fromCondition: sourceLine.condition,
+          toCondition: targetCondition,
+          merged: !!existingTarget,
+          userId: getUserId(ctx),
+        });
+
+        return { lines: updatedLines, auditEvent };
+      });
+    }),
+
   // =============================================================================
   // DEPRECATED ENDPOINTS - Removed during workflow simplification
   // The following endpoints were removed as they're no longer used in the

@@ -35,6 +35,9 @@ export default function BOHVerifyPage() {
   const [error, setError] = useState<string | null>(null);
   const [internalNotes, setInternalNotes] = useState("");
   const [lineUpdates, setLineUpdates] = useState<Record<string, LineVerification>>({});
+  const [reconditioningLineId, setReconditioningLineId] = useState<string | null>(null);
+  const [reconditionQty, setReconditionQty] = useState(1);
+  const [reconditionTarget, setReconditionTarget] = useState("");
 
   const buylistQuery = trpcClient.buylists.getById.useQuery(
     { id: id as string },
@@ -59,6 +62,30 @@ export default function BOHVerifyPage() {
       setError(err.message);
     },
   });
+
+  const reconditionMutation = trpcClient.boh.reconditionLine.useMutation({
+    onSuccess: () => {
+      showSuccess("Line reconditioned successfully");
+      setReconditioningLineId(null);
+      setReconditionQty(1);
+      setReconditionTarget("");
+      // Refetch buylist to get updated lines
+      buylistQuery.refetch();
+    },
+    onError: (err) => {
+      showError(`Reconditioning failed: ${err.message}`);
+    },
+  });
+
+  const handleRecondition = (lineId: string) => {
+    if (!buylist || !reconditionTarget) return;
+    reconditionMutation.mutate({
+      buylistId: buylist.id,
+      sourceLineId: lineId,
+      targetCondition: reconditionTarget as "NM" | "LP" | "MP" | "HP" | "DMG",
+      qty: reconditionQty,
+    });
+  };
 
   // Initialize line updates from buylist data
   useEffect(() => {
@@ -206,10 +233,13 @@ export default function BOHVerifyPage() {
           2. Update condition if card is in different condition than recorded
         </Text>
         <Text>
-          3. Reduce quantity if any cards are missing
+          3. Use &quot;Split&quot; to move units to a different condition (e.g., 1 of 3 NM cards is actually LP)
+        </Text>
+        <Text>
+          4. Reduce quantity if any cards are missing
         </Text>
         <Text size={2} color="default2" marginTop={2}>
-          Note: Prices cannot be changed - customer has already been paid
+          Note: Prices cannot be changed - customer has already been paid. Split cards keep their original price.
         </Text>
       </Box>
 
@@ -228,7 +258,7 @@ export default function BOHVerifyPage() {
           {/* Header */}
           <Box
             display="grid"
-            __gridTemplateColumns="2fr 130px 80px 90px 200px"
+            __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
             gap={3}
             padding={4}
             backgroundColor="default1"
@@ -238,61 +268,126 @@ export default function BOHVerifyPage() {
             <Text fontWeight="bold">Condition</Text>
             <Text fontWeight="bold">Qty</Text>
             <Text fontWeight="bold">Buy Price</Text>
-            <Text fontWeight="bold">Note (optional)</Text>
+            <Text fontWeight="bold">Note</Text>
+            <Text fontWeight="bold">Actions</Text>
           </Box>
 
           {buylist.lines.map((line) => {
             const lineUpdate = lineUpdates[line.id];
             const conditionChanged = lineUpdate && lineUpdate.condition !== line.condition;
+            const isReconditioning = reconditioningLineId === line.id;
 
             return (
-              <Box
-                key={line.id}
-                display="grid"
-                __gridTemplateColumns="2fr 130px 80px 90px 200px"
-                gap={3}
-                padding={4}
-                borderTopWidth={1}
-                borderTopStyle="solid"
-                borderColor="default1"
-                alignItems="center"
-                backgroundColor={conditionChanged ? "warning1" : "transparent"}
-              >
-                <Box>
-                  <Text fontWeight="medium">
-                    {line.saleorVariantName || line.saleorVariantSku}
-                  </Text>
-                  {conditionChanged && (
-                    <Text size={2} color="warning1">
-                      Originally: {CONDITION_LABELS[line.condition]}
+              <Box key={line.id}>
+                <Box
+                  display="grid"
+                  __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
+                  gap={3}
+                  padding={4}
+                  borderTopWidth={1}
+                  borderTopStyle="solid"
+                  borderColor="default1"
+                  alignItems="center"
+                  backgroundColor={conditionChanged ? "warning1" : "transparent"}
+                >
+                  <Box>
+                    <Text fontWeight="medium">
+                      {line.saleorVariantName || line.saleorVariantSku}
                     </Text>
-                  )}
+                    {conditionChanged && (
+                      <Text size={2} color="warning1">
+                        Originally: {CONDITION_LABELS[line.condition]}
+                      </Text>
+                    )}
+                  </Box>
+                  <Select
+                    value={lineUpdate?.condition ?? line.condition}
+                    onChange={(value) => updateLine(line.id, { condition: value as string })}
+                    options={CONDITIONS}
+                    size="small"
+                  />
+                  <Input
+                    type="number"
+                    min={0}
+                    max={line.qty}
+                    value={(lineUpdate?.qtyAccepted ?? line.qty).toString()}
+                    onChange={(e) =>
+                      updateLine(line.id, {
+                        qtyAccepted: Math.min(line.qty, Math.max(0, parseInt(e.target.value) || 0)),
+                      })
+                    }
+                    size="small"
+                  />
+                  <Text>${Number(line.finalPrice).toFixed(2)}</Text>
+                  <Input
+                    value={lineUpdate?.conditionNote ?? ""}
+                    onChange={(e) => updateLine(line.id, { conditionNote: e.target.value })}
+                    placeholder="e.g., 'has crease'"
+                    size="small"
+                  />
+                  <Button
+                    variant="tertiary"
+                    size="small"
+                    onClick={() => {
+                      if (isReconditioning) {
+                        setReconditioningLineId(null);
+                      } else {
+                        setReconditioningLineId(line.id);
+                        setReconditionQty(1);
+                        setReconditionTarget("");
+                      }
+                    }}
+                    disabled={line.qty < 2 && !isReconditioning}
+                  >
+                    {isReconditioning ? "Cancel" : "Split"}
+                  </Button>
                 </Box>
-                <Select
-                  value={lineUpdate?.condition ?? line.condition}
-                  onChange={(value) => updateLine(line.id, { condition: value as string })}
-                  options={CONDITIONS}
-                  size="small"
-                />
-                <Input
-                  type="number"
-                  min={0}
-                  max={line.qty}
-                  value={(lineUpdate?.qtyAccepted ?? line.qty).toString()}
-                  onChange={(e) =>
-                    updateLine(line.id, {
-                      qtyAccepted: Math.min(line.qty, Math.max(0, parseInt(e.target.value) || 0)),
-                    })
-                  }
-                  size="small"
-                />
-                <Text>${Number(line.finalPrice).toFixed(2)}</Text>
-                <Input
-                  value={lineUpdate?.conditionNote ?? ""}
-                  onChange={(e) => updateLine(line.id, { conditionNote: e.target.value })}
-                  placeholder="e.g., 'has crease'"
-                  size="small"
-                />
+
+                {/* Inline reconditioning form */}
+                {isReconditioning && (
+                  <Box
+                    display="flex"
+                    gap={3}
+                    padding={4}
+                    paddingLeft={8}
+                    backgroundColor="info1"
+                    alignItems="center"
+                    borderTopWidth={1}
+                    borderTopStyle="solid"
+                    borderColor="default1"
+                  >
+                    <Text size={2} fontWeight="medium">Move</Text>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={line.qty}
+                      value={reconditionQty.toString()}
+                      onChange={(e) =>
+                        setReconditionQty(
+                          Math.min(line.qty, Math.max(1, parseInt(e.target.value) || 1))
+                        )
+                      }
+                      size="small"
+                      style={{ width: 60 }}
+                    />
+                    <Text size={2}>of {line.qty} to</Text>
+                    <Select
+                      value={reconditionTarget}
+                      onChange={(value) => setReconditionTarget(value as string)}
+                      options={CONDITIONS.filter((c) => c.value !== line.condition)}
+                      size="small"
+                      style={{ width: 160 }}
+                    />
+                    <Button
+                      variant="primary"
+                      size="small"
+                      onClick={() => handleRecondition(line.id)}
+                      disabled={!reconditionTarget || reconditionMutation.isLoading}
+                    >
+                      {reconditionMutation.isLoading ? "Moving..." : "Move"}
+                    </Button>
+                  </Box>
+                )}
               </Box>
             );
           })}
@@ -300,7 +395,7 @@ export default function BOHVerifyPage() {
           {/* Totals */}
           <Box
             display="grid"
-            __gridTemplateColumns="2fr 130px 80px 90px 200px"
+            __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
             gap={3}
             padding={4}
             backgroundColor="default1"
@@ -310,6 +405,7 @@ export default function BOHVerifyPage() {
             <Box />
             <Text fontWeight="bold">{totalQty}</Text>
             <Text fontWeight="bold">${totalValue.toFixed(2)}</Text>
+            <Box />
             <Box />
           </Box>
         </Box>
