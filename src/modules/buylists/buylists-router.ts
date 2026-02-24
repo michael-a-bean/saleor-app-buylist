@@ -6,7 +6,8 @@ import { z } from "zod";
 
 import { extractUserFromToken } from "@/lib/jwt-utils";
 import { createLogger } from "@/lib/logger";
-import { createEnhancedSaleorClient, createSaleorClient } from "@/lib/saleor-client";
+import { createEnhancedSaleorClient, createSaleorClient, type StockUpdateResult } from "@/lib/saleor-client";
+import { computeWacForNewEventOptimized } from "@/lib/wac-service";
 import { ruleEngine } from "@/modules/pricing/rule-engine";
 import { protectedClientProcedure } from "@/modules/trpc/protected-client-procedure";
 import { router } from "@/modules/trpc/trpc-server";
@@ -1095,6 +1096,366 @@ export const buylistsRouter = router({
       });
 
       return updated;
+    }),
+
+  /**
+   * Void a buylist after payment — reverses financial, stock, and cost records.
+   *
+   * Handles two scenarios:
+   *   A: PENDING_VERIFICATION — payout made but cards not yet received (reverse payout only)
+   *   B: COMPLETED — cards received into stock (reverse payout + stock + cost events)
+   *
+   * Accounting invariants preserved:
+   *   - Append-only ledger: creates reversal entries, never deletes existing records
+   *   - WAC integrity: BUYLIST_RECEIPT_REVERSAL events recalculate WAC with negative qtyDelta
+   *   - Financial records: payouts status-transitioned to CANCELLED, never deleted
+   */
+  void: protectedClientProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        reason: z.string().min(1, "Void reason is required").max(500),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const buylist = await ctx.prisma.buylist.findFirst({
+        where: {
+          id: input.id,
+          installationId: ctx.installationId,
+        },
+        include: {
+          lines: true,
+          payouts: true,
+          events: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      });
+
+      if (!buylist) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Buylist not found",
+        });
+      }
+
+      if (buylist.status === "CANCELLED") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Buylist is already cancelled",
+        });
+      }
+
+      if (buylist.status !== "PENDING_VERIFICATION" && buylist.status !== "COMPLETED") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Cannot void buylist with status '${buylist.status}'`,
+        });
+      }
+
+      const previousStatus = buylist.status;
+      const userId = getUserId(ctx);
+      const now = new Date();
+
+      // Track reversal summary for audit
+      const reversalSummary: {
+        payoutsReversed: number;
+        cashMovementsCreated: number;
+        creditTransactionsCreated: number;
+        creditShortfall: { customerId: string; expected: number; actual: number } | null;
+        stockAdjustments: { attempted: number; successful: number; failed: number } | null;
+        costEventsCreated: number;
+      } = {
+        payoutsReversed: 0,
+        cashMovementsCreated: 0,
+        creditTransactionsCreated: 0,
+        creditShortfall: null,
+        stockAdjustments: null,
+        costEventsCreated: 0,
+      };
+
+      // ── 1. Financial Reversal (both scenarios) ──────────────────────────
+
+      await ctx.prisma.$transaction(async (tx: any) => {
+        const completedPayouts = buylist.payouts.filter((p: any) => p.status === "COMPLETED");
+
+        for (const payout of completedPayouts) {
+          // Transition payout status to CANCELLED (never delete)
+          await tx.buylistPayout.update({
+            where: { id: payout.id },
+            data: { status: "CANCELLED" },
+          });
+          reversalSummary.payoutsReversed++;
+
+          // Reverse CASH payout
+          if (payout.method === "CASH" && payout.posRegisterSessionId) {
+            const payoutAmount = new Decimal(payout.amount.toString());
+
+            // Create positive VOID_REVERSAL movement (cash back to drawer)
+            await tx.cashMovement.create({
+              data: {
+                registerSessionId: payout.posRegisterSessionId,
+                movementType: "VOID_REVERSAL",
+                amount: payoutAmount, // Positive = cash back into drawer
+                currency: payout.currency,
+                reason: `Void reversal: buylist ${buylist.buylistNumber}`,
+                referenceNumber: payout.id,
+                buylistPayoutId: payout.id,
+                performedBy: userId ?? "system",
+                performedAt: now,
+                notes: `Void reason: ${input.reason}`,
+              },
+            });
+            reversalSummary.cashMovementsCreated++;
+
+            // Decrement register session totalCashOut
+            await tx.registerSession.update({
+              where: { id: payout.posRegisterSessionId },
+              data: {
+                totalCashOut: { decrement: payoutAmount.toNumber() },
+              },
+            });
+
+            logger.info("Cash payout reversed via VOID_REVERSAL", {
+              buylistNumber: buylist.buylistNumber,
+              payoutId: payout.id,
+              registerSessionId: payout.posRegisterSessionId,
+              amount: payoutAmount.toString(),
+            });
+          }
+
+          // Reverse STORE_CREDIT payout
+          if (payout.method === "STORE_CREDIT" && buylist.saleorUserId) {
+            const payoutAmount = new Decimal(payout.amount.toString());
+
+            const credit = await tx.customerCredit.findUnique({
+              where: {
+                installationId_saleorCustomerId: {
+                  installationId: ctx.installationId,
+                  saleorCustomerId: buylist.saleorUserId,
+                },
+              },
+            });
+
+            if (credit) {
+              const currentBalance = new Decimal(credit.balance.toString());
+              // Debit what's available — don't block on shortfall
+              const debitAmount = Decimal.min(currentBalance, payoutAmount);
+              const newBalance = currentBalance.minus(debitAmount);
+
+              if (debitAmount.lt(payoutAmount)) {
+                reversalSummary.creditShortfall = {
+                  customerId: buylist.saleorUserId,
+                  expected: payoutAmount.toNumber(),
+                  actual: debitAmount.toNumber(),
+                };
+                logger.warn("Credit shortfall during void — customer spent some credit", {
+                  buylistNumber: buylist.buylistNumber,
+                  customerId: buylist.saleorUserId,
+                  expected: payoutAmount.toString(),
+                  available: currentBalance.toString(),
+                  debited: debitAmount.toString(),
+                });
+              }
+
+              await tx.customerCredit.update({
+                where: { id: credit.id },
+                data: { balance: newBalance },
+              });
+
+              await tx.creditTransaction.create({
+                data: {
+                  creditAccountId: credit.id,
+                  transactionType: "ADJUSTMENT",
+                  amount: debitAmount.negated(), // Negative = debit
+                  currency: payout.currency,
+                  balanceAfter: newBalance,
+                  sourceBuylistId: buylist.id,
+                  note: `Void reversal: buylist ${buylist.buylistNumber}. Reason: ${input.reason}`,
+                  createdBy: userId,
+                },
+              });
+              reversalSummary.creditTransactionsCreated++;
+
+              logger.info("Store credit reversed via ADJUSTMENT", {
+                buylistNumber: buylist.buylistNumber,
+                customerId: buylist.saleorUserId,
+                debited: debitAmount.toString(),
+                newBalance: newBalance.toString(),
+                shortfall: reversalSummary.creditShortfall !== null,
+              });
+            }
+          }
+        }
+
+        // ── 2. Update buylist status to CANCELLED ───────────────────────
+
+        await tx.buylist.update({
+          where: { id: input.id },
+          data: { status: "CANCELLED" },
+        });
+      });
+
+      // ── 3. Stock + Cost Reversal (COMPLETED only — outside DB transaction) ──
+
+      if (previousStatus === "COMPLETED") {
+        // Find the cost events created during verifyAndReceive to get actual variant IDs
+        const existingCostEvents = await ctx.prisma.costLayerEvent.findMany({
+          where: {
+            installationId: ctx.installationId,
+            eventType: "BUYLIST_RECEIPT",
+            sourceBuylistLineId: { in: buylist.lines.map((l: any) => l.id) },
+          },
+        });
+
+        // Build a map: buylist line ID → cost event (with actual condition-specific variant)
+        const costEventByLineId = new Map<string, any>();
+        for (const event of existingCostEvents) {
+          if (event.sourceBuylistLineId) {
+            costEventByLineId.set(event.sourceBuylistLineId, event);
+          }
+        }
+
+        // Stock adjustments (negative deltas)
+        const stockAdjustments: Array<{ variantId: string; warehouseId: string; delta: number }> = [];
+
+        for (const line of buylist.lines) {
+          const qtyAccepted = (line as any).qtyAccepted ?? 0;
+          if (qtyAccepted <= 0) continue;
+
+          const costEvent = costEventByLineId.get(line.id);
+          if (!costEvent) {
+            logger.warn("No cost event found for accepted line — skipping stock/cost reversal", {
+              lineId: line.id,
+              buylistNumber: buylist.buylistNumber,
+            });
+            continue;
+          }
+
+          // Use the actual variant ID from the cost event (condition-specific)
+          const actualVariantId = costEvent.saleorVariantId;
+
+          stockAdjustments.push({
+            variantId: actualVariantId,
+            warehouseId: buylist.saleorWarehouseId,
+            delta: -qtyAccepted, // Negative = remove from stock
+          });
+        }
+
+        // Execute Saleor stock adjustments
+        let stockResults: StockUpdateResult[] = [];
+        if (stockAdjustments.length > 0) {
+          logger.info("Reversing Saleor stock for voided buylist", {
+            buylistId: input.id,
+            adjustmentCount: stockAdjustments.length,
+          });
+
+          const saleorClient = createSaleorClient(ctx.apiClient);
+          stockResults = await saleorClient.bulkAdjustStock(stockAdjustments);
+
+          const failures = stockResults.filter((r) => !r.success);
+          if (failures.length > 0) {
+            logger.error("Some stock reversals failed during void", {
+              buylistId: input.id,
+              failures: failures.map((f) => ({
+                variantId: f.variantId,
+                error: f.error,
+              })),
+            });
+            // Don't throw — proceed with cost events and audit. Stock reconciliation will flag.
+          }
+
+          reversalSummary.stockAdjustments = {
+            attempted: stockAdjustments.length,
+            successful: stockResults.filter((r) => r.success).length,
+            failed: failures.length,
+          };
+        }
+
+        // Create cost layer reversal events
+        for (const line of buylist.lines) {
+          const qtyAccepted = (line as any).qtyAccepted ?? 0;
+          if (qtyAccepted <= 0) continue;
+
+          const costEvent = costEventByLineId.get(line.id);
+          if (!costEvent) continue;
+
+          const actualVariantId = costEvent.saleorVariantId;
+
+          const wacResult = await computeWacForNewEventOptimized({
+            prisma: ctx.prisma,
+            installationId: ctx.installationId,
+            variantId: actualVariantId,
+            warehouseId: buylist.saleorWarehouseId,
+            newQtyDelta: -qtyAccepted,
+            newUnitCost: new Decimal(line.finalPrice.toString()),
+            newLandedCostDelta: new Decimal(0),
+          });
+
+          await ctx.prisma.costLayerEvent.create({
+            data: {
+              installationId: ctx.installationId,
+              eventType: "BUYLIST_RECEIPT_REVERSAL",
+              saleorVariantId: actualVariantId,
+              saleorWarehouseId: buylist.saleorWarehouseId,
+              qtyDelta: -qtyAccepted,
+              unitCost: line.finalPrice,
+              currency: line.currency,
+              landedCostDelta: new Decimal(0),
+              sourceBuylistLineId: line.id,
+              wacAtEvent: wacResult.wacAtEvent,
+              qtyOnHandAtEvent: wacResult.qtyOnHandAtEvent,
+              totalValueAtEvent: wacResult.totalValueAtEvent,
+              previousEventId: wacResult.previousEventId,
+              createdBy: userId,
+            },
+          });
+          reversalSummary.costEventsCreated++;
+        }
+      }
+
+      // ── 4. Audit Event ─────────────────────────────────────────────────
+
+      await ctx.prisma.buylistAuditEvent.create({
+        data: {
+          buylistId: input.id,
+          action: "VOIDED",
+          userId,
+          metadata: {
+            reason: input.reason,
+            previousStatus,
+            payoutsReversed: reversalSummary.payoutsReversed,
+            cashMovementsCreated: reversalSummary.cashMovementsCreated,
+            creditTransactionsCreated: reversalSummary.creditTransactionsCreated,
+            ...(reversalSummary.creditShortfall && { creditShortfall: reversalSummary.creditShortfall }),
+            ...(reversalSummary.stockAdjustments && { stockAdjustments: reversalSummary.stockAdjustments }),
+            costEventsCreated: reversalSummary.costEventsCreated,
+          },
+        },
+      });
+
+      logger.info("Buylist voided successfully", {
+        buylistId: input.id,
+        buylistNumber: buylist.buylistNumber,
+        previousStatus,
+        reason: input.reason,
+        ...reversalSummary,
+      });
+
+      // Refetch the updated buylist
+      const updated = await ctx.prisma.buylist.findFirst({
+        where: { id: input.id },
+        include: {
+          lines: true,
+          payouts: true,
+        },
+      });
+
+      return {
+        buylist: updated,
+        reversalSummary,
+      };
     }),
 
   /**
