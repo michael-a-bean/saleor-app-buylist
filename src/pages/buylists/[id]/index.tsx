@@ -1,21 +1,10 @@
-import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
+import { Box, Button, Modal, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
+import { StatusBadge } from "@/ui/components";
 import { useToast } from "@/ui/components/Toast";
-
-const STATUS_COLORS: Record<string, string> = {
-  DRAFT: "default2",
-  QUOTED: "info1",
-  SUBMITTED: "warning1",
-  PENDING_REVIEW: "warning1",
-  APPROVED: "success1",
-  RECEIVED: "success1",
-  PAID: "success1",
-  REJECTED: "critical1",
-  CANCELLED: "default2",
-};
 
 const CONDITION_LABELS: Record<string, string> = {
   NM: "Near Mint",
@@ -56,6 +45,21 @@ export default function BuylistDetailPage() {
     },
     onError: (err) => {
       showError(`Failed to cancel buylist: ${err.message}`);
+    },
+  });
+
+  const [showVoidModal, setShowVoidModal] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+
+  const voidMutation = trpcClient.buylists.void.useMutation({
+    onSuccess: () => {
+      showSuccess("Buylist has been voided. Financial records reversed.");
+      setShowVoidModal(false);
+      setVoidReason("");
+      utils.buylists.getById.invalidate({ id: id as string });
+    },
+    onError: (err) => {
+      showError(`Failed to void buylist: ${err.message}`);
     },
   });
 
@@ -125,14 +129,7 @@ export default function BuylistDetailPage() {
             <Text as="h1" size={8} fontWeight="bold">
               {buylist.buylistNumber}
             </Text>
-            <Box
-              paddingX={3}
-              paddingY={1}
-              borderRadius={4}
-              backgroundColor={STATUS_COLORS[buylist.status] as unknown as undefined}
-            >
-              <Text fontWeight="medium">{buylist.status}</Text>
-            </Box>
+            <StatusBadge status={buylist.status} />
           </Box>
           <Text color="default2">
             Created {new Date(buylist.createdAt).toLocaleString()}
@@ -150,14 +147,31 @@ export default function BuylistDetailPage() {
               >
                 Verify Now
               </Button>
-              <Button
-                onClick={() => cancelMutation.mutate({ id: buylist.id })}
-                variant="tertiary"
-                disabled={cancelMutation.isLoading}
-              >
-                Cancel
-              </Button>
+              {!buylist.paidAt ? (
+                <Button
+                  onClick={() => cancelMutation.mutate({ id: buylist.id })}
+                  variant="tertiary"
+                  disabled={cancelMutation.isLoading}
+                >
+                  Cancel
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => setShowVoidModal(true)}
+                  variant="tertiary"
+                >
+                  Void
+                </Button>
+              )}
             </>
+          )}
+          {buylist.status === "COMPLETED" && (
+            <Button
+              onClick={() => setShowVoidModal(true)}
+              variant="tertiary"
+            >
+              Void
+            </Button>
           )}
         </Box>
       </Box>
@@ -298,6 +312,26 @@ export default function BuylistDetailPage() {
         </Box>
       </Box>
 
+      {/* Cancelled/Voided Banner */}
+      {buylist.status === "CANCELLED" && (
+        <Box
+          padding={4}
+          borderRadius={4}
+          backgroundColor="critical1"
+        >
+          <Text fontWeight="bold">
+            This buylist has been {buylist.events.some((e) => e.action === "VOIDED") ? "voided" : "cancelled"}.
+          </Text>
+          {(() => {
+            const voidEvent = buylist.events.find((e) => e.action === "VOIDED");
+            const reason = voidEvent?.metadata && typeof voidEvent.metadata === "object" && "reason" in voidEvent.metadata
+              ? (voidEvent.metadata as { reason?: string }).reason
+              : null;
+            return reason ? <Text size={2}>Reason: {reason}</Text> : null;
+          })()}
+        </Box>
+      )}
+
       {/* Audit Events */}
       {buylist.events.length > 0 && (
         <Box>
@@ -335,6 +369,51 @@ export default function BuylistDetailPage() {
           </Box>
         </Box>
       )}
+
+      {/* Void Confirmation Modal */}
+      <Modal open={showVoidModal} onChange={(o: boolean) => !o && setShowVoidModal(false)}>
+        <Modal.Content>
+          <Box padding={6} __maxWidth="480px">
+            <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
+              Void Buylist
+            </Text>
+            <Text marginBottom={2}>
+              This will reverse all financial records for this buylist
+              {buylist.status === "COMPLETED" && ", remove stock from inventory, and reverse cost layer events"}.
+            </Text>
+            <Text size={2} color="critical1" marginBottom={4}>
+              This action cannot be undone.
+            </Text>
+            <Text fontWeight="medium" marginBottom={2}>
+              Reason (required)
+            </Text>
+            <Textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="e.g., Customer returned, duplicate entry, cards not received"
+              rows={3}
+            />
+            <Box display="flex" gap={3} justifyContent="flex-end" marginTop={4}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowVoidModal(false);
+                  setVoidReason("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!voidReason.trim() || voidMutation.isLoading}
+                onClick={() => voidMutation.mutate({ id: buylist.id, reason: voidReason.trim() })}
+              >
+                {voidMutation.isLoading ? "Voiding..." : "Void Buylist"}
+              </Button>
+            </Box>
+          </Box>
+        </Modal.Content>
+      </Modal>
     </Box>
   );
 }
