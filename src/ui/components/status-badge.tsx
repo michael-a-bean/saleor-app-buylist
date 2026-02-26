@@ -10,6 +10,7 @@ const statusVariantMap: Record<string, "default" | "warning" | "error" | "succes
   COMPLETED: "success",
   CANCELLED: "default",
   PAID: "success",
+  PENDING_VERIFICATION: "warning",
 };
 
 interface StatusBadgeProps {

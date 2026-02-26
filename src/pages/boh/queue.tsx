@@ -1,14 +1,32 @@
-import { Box, Button, Text } from "@saleor/macaw-ui";
+import { Box, Button, Modal, Text, Textarea } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { DataTable, InlineSpinner, StatBox, TableSkeleton } from "@/ui/components";
+import { useToast } from "@/ui/components/Toast";
 
 export default function BOHQueuePage() {
   const router = useRouter();
   const { verified } = router.query;
+  const { showSuccess, showError } = useToast();
   const [recentlyVerified, setRecentlyVerified] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<{ id: string; number: string } | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const utils = trpcClient.useUtils();
+
+  const voidMutation = trpcClient.buylists.void.useMutation({
+    onSuccess: () => {
+      showSuccess("Buylist has been voided. Financial records reversed.");
+      setVoidTarget(null);
+      setVoidReason("");
+      utils.boh.queue.invalidate();
+      utils.boh.stats.invalidate();
+    },
+    onError: (err) => {
+      showError(`Failed to void buylist: ${err.message}`);
+    },
+  });
 
   // Detect if we just verified a buylist
   useEffect(() => {
@@ -178,16 +196,28 @@ export default function BOHQueuePage() {
               header: "",
               align: "right",
               render: (row) => (
-                <Button
-                  variant="primary"
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    router.push(`/boh/buylists/${row.id}/verify`);
-                  }}
-                >
-                  Verify
-                </Button>
+                <Box display="flex" gap={2} justifyContent="flex-end">
+                  <Button
+                    variant="tertiary"
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setVoidTarget({ id: row.id, number: row.buylistNumber });
+                    }}
+                  >
+                    Void
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/boh/buylists/${row.id}/verify`);
+                    }}
+                  >
+                    Verify
+                  </Button>
+                </Box>
               ),
             },
           ]}
@@ -196,6 +226,54 @@ export default function BOHQueuePage() {
           onRowClick={(row) => router.push(`/boh/buylists/${row.id}/verify`)}
         />
       )}
+
+      {/* Void Confirmation Modal */}
+      <Modal open={!!voidTarget} onChange={(o: boolean) => !o && setVoidTarget(null)}>
+        <Modal.Content>
+          <Box padding={6} __maxWidth="480px">
+            <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
+              Void {voidTarget?.number}
+            </Text>
+            <Text marginBottom={2}>
+              This will reverse all financial records including payout for this buylist.
+            </Text>
+            <Text size={2} color="critical1" marginBottom={4}>
+              This action cannot be undone.
+            </Text>
+            <Text fontWeight="medium" marginBottom={2}>
+              Reason (required)
+            </Text>
+            <Textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="e.g., Customer returned, duplicate entry, cards not received"
+              rows={3}
+            />
+            <Box display="flex" gap={3} justifyContent="flex-end" marginTop={4}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setVoidTarget(null);
+                  setVoidReason("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!voidReason.trim() || voidMutation.isLoading}
+                onClick={() => {
+                  if (voidTarget) {
+                    voidMutation.mutate({ id: voidTarget.id, reason: voidReason.trim() });
+                  }
+                }}
+              >
+                {voidMutation.isLoading ? "Voiding..." : "Void Buylist"}
+              </Button>
+            </Box>
+          </Box>
+        </Modal.Content>
+      </Modal>
     </Box>
   );
 }
