@@ -13,18 +13,3 @@ export const BaseError = ModernError.subclass("BaseError", {
   },
 });
 
-export const UnknownError = BaseError.subclass("UnknownError");
-
-export const ValueError = BaseError.subclass("ValueError");
-
-export const NotFoundError = BaseError.subclass("NotFoundError");
-
-export const ValidationError = BaseError.subclass("ValidationError");
-
-export const PermissionError = BaseError.subclass("PermissionError");
-
-export const SaleorApiError = BaseError.subclass("SaleorApiError");
-
-export const PricingError = BaseError.subclass("PricingError");
-
-export const BuylistError = BaseError.subclass("BuylistError");

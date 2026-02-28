@@ -64,5 +64,3 @@ export function ConditionBuilder({
     </Box>
   );
 }
-
-export default ConditionBuilder;
