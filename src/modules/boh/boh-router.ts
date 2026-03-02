@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, multiline-comment-style */
+/* eslint-disable @typescript-eslint/no-explicit-any, multiline-comment-style */
 import { TRPCError } from "@trpc/server";
 import { Decimal } from "decimal.js";
 import { z } from "zod";

@@ -134,9 +134,11 @@ const mockSaleorClient = {
     }
   ),
   getConditionVariantId: vi.fn().mockImplementation(
-    async (baseSku: string, condition: CardCondition) => {
-      // Simulate looking up condition-specific variant
-      // Extract UUID from SKU, return condition-specific variant ID
+    async (_baseSku: string, condition: CardCondition) => {
+      /*
+       * Simulate looking up condition-specific variant
+       * Extract UUID from SKU, return condition-specific variant ID
+       */
       return `variant-${condition}-NF`;
     }
   ),
@@ -178,12 +180,14 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
         createMockBuylistLine({ id: "line-5", condition: "MP", finalPrice: new Decimal("4.50"), qty: 1 }),
       ];
 
-      // BOH verification decisions:
-      // line-1: Accept both (qty=2)
-      // line-2: Accept (qty=1)
-      // line-3: Accept (qty=1)
-      // line-4: Accept but downgrade condition HP → DMG (price doesn't change — already paid)
-      // line-5: Reject (qty=0) — card was fake/damaged beyond acceptance
+      /*
+       * BOH verification decisions:
+       * line-1: Accept both (qty=2)
+       * line-2: Accept (qty=1)
+       * line-3: Accept (qty=1)
+       * line-4: Accept but downgrade condition HP → DMG (price doesn't change — already paid)
+       * line-5: Reject (qty=0) — card was fake/damaged beyond acceptance
+       */
       const verificationInput = {
         buylistId: "buylist-it2",
         lines: [
@@ -321,7 +325,7 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
       mockPrisma.costLayerEvent.findFirst.mockResolvedValue(null);
 
       const result = await computeWacForNewEventOptimized({
-        prisma: mockPrisma as any,
+        prisma: mockPrisma as any, // eslint-disable-line @typescript-eslint/no-explicit-any
         installationId: "install-1",
         variantId: "variant-NM-NF",
         warehouseId: "warehouse-main",
@@ -347,7 +351,7 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
       });
 
       const result = await computeWacForNewEventOptimized({
-        prisma: mockPrisma as any,
+        prisma: mockPrisma as any, // eslint-disable-line @typescript-eslint/no-explicit-any
         installationId: "install-1",
         variantId: "variant-NM-NF",
         warehouseId: "warehouse-main",
@@ -373,7 +377,7 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
       });
 
       const result = await computeWacForNewEventOptimized({
-        prisma: mockPrisma as any,
+        prisma: mockPrisma as any, // eslint-disable-line @typescript-eslint/no-explicit-any
         installationId: "install-1",
         variantId: "variant-NM-NF",
         warehouseId: "warehouse-main",
@@ -405,17 +409,20 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
 
       expect(totalCostBasis.toNumber()).toBe(37.50);
 
-      // Customer was paid $34.00 total (from FOH)
-      // But cost basis is $37.50 because line-5 ($4.50) was rejected — customer was overpaid
-      // This is correct behavior: rejection doesn't claw back payment
-      const customerPaid = 34.00;
+      /*
+       * Customer was paid $34.00 total (from FOH)
+       * But cost basis is $37.50 because line-5 ($4.50) was rejected — customer was overpaid
+       * This is correct behavior: rejection doesn't claw back payment
+       */
+      const _customerPaid = 34.00;
       const inventoryCostBasis = totalCostBasis.toNumber();
-      expect(inventoryCostBasis).toBe(37.50); // Slightly more than paid — includes the rejected line's cost allocation
-      // Wait — rejected line (line-5, $4.50) is NOT in cost basis since it was rejected
-      // Recalculate: 2×8 + 6.50 + 12 + 3 = 37.50
-      // Customer paid: 8×2 + 6.50 + 12 + 3 + 4.50 = 42, but only 34 since finalPrices: 8+6.5+12+3+4.5 = 34
-      // Actually totalFinalAmount = sum of all lines finalPrice × qty
-      // The customer payment doesn't change on rejection — that's a business decision
+      expect(inventoryCostBasis).toBe(37.50);
+      /*
+       * Rejected line (line-5, $4.50) is NOT in cost basis since it was rejected.
+       * Recalculate: 2×8 + 6.50 + 12 + 3 = 37.50
+       * Customer paid: 8×2 + 6.50 + 12 + 3 + 4.50 = 42, but only 34 since finalPrices sum to 34
+       * The customer payment doesn't change on rejection — that's a business decision
+       */
     });
 
     it("should have no orphaned cost events (every event links to a buylist line)", () => {

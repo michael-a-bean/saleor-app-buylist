@@ -11,7 +11,7 @@
  * - Idempotency handling
  */
 import { Decimal } from "decimal.js";
-import { afterEach,beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // ==================== Type Definitions ====================
 
@@ -343,7 +343,7 @@ describe("createAndPay Business Logic", () => {
         DMG: 0.25,
       };
 
-      for (const [condition, multiplier] of Object.entries(conditionMultipliers)) {
+      for (const [_condition, multiplier] of Object.entries(conditionMultipliers)) {
         const expectedPrice = marketPrice * basePercentage * multiplier;
         expect(expectedPrice).toBe(50 * multiplier);
       }
@@ -806,8 +806,8 @@ describe("createAndPay Cost Layer Events", () => {
   describe("Multi-Line WAC Updates", () => {
     it("should process lines sequentially for same variant", () => {
       // Simulate multiple lines for same variant in one buylist
-      const variantId = "variant-1";
-      const warehouseId = "warehouse-1";
+      const _variantId = "variant-1";
+      const _warehouseId = "warehouse-1";
 
       // Initial state
       let currentQty = 10;
