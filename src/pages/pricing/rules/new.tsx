@@ -2,6 +2,7 @@
  * Create New Pricing Rule Page
  */
 
+import { Breadcrumbs, Layout } from "@saleor/apps-ui";
 import { Box, Button, Input, Select, Text, Textarea } from "@saleor/macaw-ui";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -98,14 +99,12 @@ export default function NewRulePage() {
     <Box display="flex" flexDirection="column" gap={6}>
       {/* Header */}
       <Box>
-        <Box display="flex" alignItems="center" gap={2} marginBottom={1}>
-          <Link href={`/pricing/rules?policyId=${policyId}`}>
-            <Text color="info1" size={2}>
-              ← Back to Rules
-            </Text>
-          </Link>
-        </Box>
-        <Text as="h1" size={8} fontWeight="bold">
+        <Breadcrumbs marginBottom={1}>
+          <Breadcrumbs.Item href="/pricing/policies">Policies</Breadcrumbs.Item>
+          <Breadcrumbs.Item href={`/pricing/rules?policyId=${policyId}`}>Rules</Breadcrumbs.Item>
+          <Breadcrumbs.Item>New Rule</Breadcrumbs.Item>
+        </Breadcrumbs>
+        <Text as="h1" size={10} fontWeight="bold" marginTop={2}>
           Create Pricing Rule
         </Text>
       </Box>
@@ -117,152 +116,150 @@ export default function NewRulePage() {
       )}
 
       {/* Form */}
-      <Box
-        padding={6}
-        borderRadius={4}
-        borderWidth={1}
-        borderStyle="solid"
-        borderColor="default1"
-        display="flex"
-        flexDirection="column"
-        gap={6}
+      <Layout.AppSection
+        heading="Rule Configuration"
+        sideContent={<Text>Define conditions and actions for this pricing rule</Text>}
       >
-        {/* Basic Info */}
-        <Box display="flex" flexDirection="column" gap={4}>
-          <Text size={5} fontWeight="bold">
-            Basic Information
-          </Text>
+        <Layout.AppSectionCard>
+          <Box padding={4} display="flex" flexDirection="column" gap={6}>
+            {/* Basic Info */}
+            <Box display="flex" flexDirection="column" gap={4}>
+              <Text size={5} fontWeight="bold">
+                Basic Information
+              </Text>
 
-          <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
-            <Input
-              label="Rule Name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g., MH3 Bonus"
-              required
-            />
-            <Input
-              label="Priority"
-              type="number"
-              value={form.priority.toString()}
-              onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
-              helperText="Lower numbers are evaluated first"
-            />
+              <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
+                <Input
+                  label="Rule Name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="e.g., MH3 Bonus"
+                  required
+                />
+                <Input
+                  label="Priority"
+                  type="number"
+                  value={form.priority.toString()}
+                  onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+                  helperText="Lower numbers are evaluated first"
+                />
+              </Box>
+
+              <Textarea
+                label="Description (optional)"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Describe what this rule does..."
+              />
+            </Box>
+
+            {/* Conditions */}
+            <Box display="flex" flexDirection="column" gap={4}>
+              <Text size={5} fontWeight="bold">
+                Conditions
+              </Text>
+              <Text size={2} color="default2">
+                Define when this rule should apply
+              </Text>
+
+              <ConditionBuilder
+                value={form.conditions}
+                onChange={(conditions) => setForm({ ...form, conditions })}
+                label=""
+              />
+            </Box>
+
+            {/* Action */}
+            <Box display="flex" flexDirection="column" gap={4}>
+              <Text size={5} fontWeight="bold">
+                Action
+              </Text>
+              <Text size={2} color="default2">
+                What happens when conditions match
+              </Text>
+
+              <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4}>
+                <Select
+                  label="Action Type"
+                  value={form.actionType}
+                  onChange={(value) => setForm({ ...form, actionType: value as string })}
+                  options={ACTION_TYPES}
+                />
+                <Input
+                  label="Value"
+                  type="number"
+                  step="0.01"
+                  value={form.actionValue.toString()}
+                  onChange={(e) => setForm({ ...form, actionValue: parseFloat(e.target.value) || 0 })}
+                  helperText={
+                    form.actionType.includes("PERCENTAGE")
+                      ? "e.g., 10 for +10%"
+                      : "e.g., 0.50 for $0.50"
+                  }
+                />
+                <Select
+                  label="Stacking Mode"
+                  value={form.stackingMode}
+                  onChange={(value) => setForm({ ...form, stackingMode: value as string })}
+                  options={STACKING_MODES}
+                />
+              </Box>
+            </Box>
+
+            {/* Time Window */}
+            <Box display="flex" flexDirection="column" gap={4}>
+              <Text size={5} fontWeight="bold">
+                Time Window (Optional)
+              </Text>
+              <Text size={2} color="default2">
+                Limit when this rule is active
+              </Text>
+
+              <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
+                <Input
+                  label="Starts At"
+                  type="datetime-local"
+                  value={form.startsAt}
+                  onChange={(e) => setForm({ ...form, startsAt: e.target.value })}
+                />
+                <Input
+                  label="Ends At"
+                  type="datetime-local"
+                  value={form.endsAt}
+                  onChange={(e) => setForm({ ...form, endsAt: e.target.value })}
+                />
+              </Box>
+            </Box>
+
+            {/* Active checkbox */}
+            <Box display="flex" alignItems="center" gap={2}>
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={form.isActive}
+                onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+              />
+              <label htmlFor="isActive">
+                <Text>Rule is active</Text>
+              </label>
+            </Box>
+
+            {/* Submit */}
+            <Box display="flex" justifyContent="flex-end" gap={2}>
+              <Link href={`/pricing/rules?policyId=${policyId}`}>
+                <Button variant="secondary">Cancel</Button>
+              </Link>
+              <Button
+                onClick={handleSubmit}
+                variant="primary"
+                disabled={!form.name || createMutation.isLoading}
+              >
+                {createMutation.isLoading ? "Creating..." : "Create Rule"}
+              </Button>
+            </Box>
           </Box>
-
-          <Textarea
-            label="Description (optional)"
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            placeholder="Describe what this rule does..."
-          />
-        </Box>
-
-        {/* Conditions */}
-        <Box display="flex" flexDirection="column" gap={4}>
-          <Text size={5} fontWeight="bold">
-            Conditions
-          </Text>
-          <Text size={2} color="default2">
-            Define when this rule should apply
-          </Text>
-
-          <ConditionBuilder
-            value={form.conditions}
-            onChange={(conditions) => setForm({ ...form, conditions })}
-            label=""
-          />
-        </Box>
-
-        {/* Action */}
-        <Box display="flex" flexDirection="column" gap={4}>
-          <Text size={5} fontWeight="bold">
-            Action
-          </Text>
-          <Text size={2} color="default2">
-            What happens when conditions match
-          </Text>
-
-          <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4}>
-            <Select
-              label="Action Type"
-              value={form.actionType}
-              onChange={(value) => setForm({ ...form, actionType: value as string })}
-              options={ACTION_TYPES}
-            />
-            <Input
-              label="Value"
-              type="number"
-              step="0.01"
-              value={form.actionValue.toString()}
-              onChange={(e) => setForm({ ...form, actionValue: parseFloat(e.target.value) || 0 })}
-              helperText={
-                form.actionType.includes("PERCENTAGE")
-                  ? "e.g., 10 for +10%"
-                  : "e.g., 0.50 for $0.50"
-              }
-            />
-            <Select
-              label="Stacking Mode"
-              value={form.stackingMode}
-              onChange={(value) => setForm({ ...form, stackingMode: value as string })}
-              options={STACKING_MODES}
-            />
-          </Box>
-        </Box>
-
-        {/* Time Window */}
-        <Box display="flex" flexDirection="column" gap={4}>
-          <Text size={5} fontWeight="bold">
-            Time Window (Optional)
-          </Text>
-          <Text size={2} color="default2">
-            Limit when this rule is active
-          </Text>
-
-          <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
-            <Input
-              label="Starts At"
-              type="datetime-local"
-              value={form.startsAt}
-              onChange={(e) => setForm({ ...form, startsAt: e.target.value })}
-            />
-            <Input
-              label="Ends At"
-              type="datetime-local"
-              value={form.endsAt}
-              onChange={(e) => setForm({ ...form, endsAt: e.target.value })}
-            />
-          </Box>
-        </Box>
-
-        {/* Active checkbox */}
-        <Box display="flex" alignItems="center" gap={2}>
-          <input
-            type="checkbox"
-            id="isActive"
-            checked={form.isActive}
-            onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-          />
-          <label htmlFor="isActive">
-            <Text>Rule is active</Text>
-          </label>
-        </Box>
-
-        {/* Submit */}
-        <Box display="flex" justifyContent="flex-end" gap={2}>
-          <Link href={`/pricing/rules?policyId=${policyId}`}>
-            <Button variant="tertiary">Cancel</Button>
-          </Link>
-          <Button
-            onClick={handleSubmit}
-            variant="primary"
-            disabled={!form.name || createMutation.isLoading}
-          >
-            {createMutation.isLoading ? "Creating..." : "Create Rule"}
-          </Button>
-        </Box>
-      </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
     </Box>
   );
 }

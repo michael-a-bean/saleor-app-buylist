@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { DataTable, InlineSpinner, StatBox, TableSkeleton } from "@/ui/components";
-import { useToast } from "@/ui/components/Toast";
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 export default function BOHQueuePage() {
   const router = useRouter();
   const { verified } = router.query;
-  const { showSuccess, showError } = useToast();
+  const { notifySuccess, notifyError } = useDashboardNotification();
   const [recentlyVerified, setRecentlyVerified] = useState<string | null>(null);
   const [voidTarget, setVoidTarget] = useState<{ id: string; number: string } | null>(null);
   const [voidReason, setVoidReason] = useState("");
@@ -17,14 +17,14 @@ export default function BOHQueuePage() {
 
   const voidMutation = trpcClient.buylists.void.useMutation({
     onSuccess: () => {
-      showSuccess("Buylist has been voided. Financial records reversed.");
+      notifySuccess("Voided", "Buylist has been voided. Financial records reversed.");
       setVoidTarget(null);
       setVoidReason("");
       utils.boh.queue.invalidate();
       utils.boh.stats.invalidate();
     },
     onError: (err) => {
-      showError(`Failed to void buylist: ${err.message}`);
+      notifyError("Error", `Failed to void buylist: ${err.message}`);
     },
   });
 
@@ -88,7 +88,7 @@ export default function BOHQueuePage() {
       )}
 
       <Box>
-        <Text as="h1" size={8} fontWeight="bold">
+        <Text as="h1" size={10} fontWeight="bold">
           BOH Verification Queue
         </Text>
         <Text as="p" color="default2">

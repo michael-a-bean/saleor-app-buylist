@@ -1,10 +1,11 @@
 import { Box, Button, Modal, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
+import { Layout } from "@saleor/apps-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { StatusBadge } from "@/ui/components";
-import { useToast } from "@/ui/components/Toast";
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 const CONDITION_LABELS: Record<string, string> = {
   NM: "Near Mint",
@@ -17,7 +18,7 @@ const CONDITION_LABELS: Record<string, string> = {
 export default function BuylistDetailPage() {
   const router = useRouter();
   const { id, created } = router.query;
-  const { showSuccess, showError } = useToast();
+  const { notifySuccess, notifyError } = useDashboardNotification();
   const [showCreatedBanner, setShowCreatedBanner] = useState(false);
 
   // Detect if this is a newly created buylist
@@ -40,11 +41,11 @@ export default function BuylistDetailPage() {
 
   const cancelMutation = trpcClient.buylists.cancel.useMutation({
     onSuccess: () => {
-      showSuccess("Buylist has been cancelled.");
+      notifySuccess("Cancelled", "Buylist has been cancelled.");
       utils.buylists.getById.invalidate({ id: id as string });
     },
     onError: (err) => {
-      showError(`Failed to cancel buylist: ${err.message}`);
+      notifyError("Error", `Failed to cancel buylist: ${err.message}`);
     },
   });
 
@@ -53,13 +54,13 @@ export default function BuylistDetailPage() {
 
   const voidMutation = trpcClient.buylists.void.useMutation({
     onSuccess: () => {
-      showSuccess("Buylist has been voided. Financial records reversed.");
+      notifySuccess("Voided", "Buylist has been voided. Financial records reversed.");
       setShowVoidModal(false);
       setVoidReason("");
       utils.buylists.getById.invalidate({ id: id as string });
     },
     onError: (err) => {
-      showError(`Failed to void buylist: ${err.message}`);
+      notifyError("Error", `Failed to void buylist: ${err.message}`);
     },
   });
 
@@ -126,7 +127,7 @@ export default function BuylistDetailPage() {
       <Box display="flex" justifyContent="space-between" alignItems="flex-start">
         <Box>
           <Box display="flex" alignItems="center" gap={4}>
-            <Text as="h1" size={8} fontWeight="bold">
+            <Text as="h1" size={10} fontWeight="bold">
               {buylist.buylistNumber}
             </Text>
             <StatusBadge status={buylist.status} />
@@ -136,7 +137,7 @@ export default function BuylistDetailPage() {
           </Text>
         </Box>
         <Box display="flex" gap={2}>
-          <Button onClick={() => router.push("/buylists")} variant="tertiary">
+          <Button onClick={() => router.push("/buylists")} variant="secondary">
             Back to List
           </Button>
           {buylist.status === "PENDING_VERIFICATION" && (
@@ -177,140 +178,137 @@ export default function BuylistDetailPage() {
       </Box>
 
       {/* Customer Info & Summary */}
-      <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={6}>
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-        >
-          <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
-            Customer
-          </Text>
-          <Box display="flex" flexDirection="column" gap={2}>
-            <InfoRow label="Name" value={buylist.customerName || "Walk-in"} />
-            <InfoRow label="Email" value={buylist.customerEmail || "-"} />
-            <InfoRow label="Phone" value={buylist.customerPhone || "-"} />
-          </Box>
-          {buylist.notes && (
-            <Box marginTop={4}>
-              <Text size={2} color="default2">Notes</Text>
-              <Text>{buylist.notes}</Text>
+      <Layout.AppSection
+        heading="Details"
+        sideContent={<Text>Customer information and buylist summary</Text>}
+      >
+        <Layout.AppSectionCard>
+          <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={6} padding={4}>
+            <Box>
+              <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
+                Customer
+              </Text>
+              <Box display="flex" flexDirection="column" gap={2}>
+                <InfoRow label="Name" value={buylist.customerName || "Walk-in"} />
+                <InfoRow label="Email" value={buylist.customerEmail || "-"} />
+                <InfoRow label="Phone" value={buylist.customerPhone || "-"} />
+              </Box>
+              {buylist.notes && (
+                <Box marginTop={4}>
+                  <Text size={2} color="default2">Notes</Text>
+                  <Text>{buylist.notes}</Text>
+                </Box>
+              )}
             </Box>
-          )}
-        </Box>
 
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-        >
-          <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
-            Summary
-          </Text>
-          <Box display="flex" flexDirection="column" gap={2}>
-            <InfoRow
-              label="Total Items"
-              value={buylist.lines.reduce((sum, l) => sum + l.qty, 0).toString()}
-            />
-            <InfoRow
-              label="Quoted Amount"
-              value={`$${Number(buylist.totalQuotedAmount).toFixed(2)}`}
-            />
-            <InfoRow
-              label="Final Amount"
-              value={`$${Number(buylist.totalFinalAmount).toFixed(2)}`}
-            />
-            <InfoRow
-              label="Pricing Policy"
-              value={buylist.pricingPolicy?.name || "Default"}
-            />
+            <Box>
+              <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
+                Summary
+              </Text>
+              <Box display="flex" flexDirection="column" gap={2}>
+                <InfoRow
+                  label="Total Items"
+                  value={buylist.lines.reduce((sum, l) => sum + l.qty, 0).toString()}
+                />
+                <InfoRow
+                  label="Quoted Amount"
+                  value={`$${Number(buylist.totalQuotedAmount).toFixed(2)}`}
+                />
+                <InfoRow
+                  label="Final Amount"
+                  value={`$${Number(buylist.totalFinalAmount).toFixed(2)}`}
+                />
+                <InfoRow
+                  label="Pricing Policy"
+                  value={buylist.pricingPolicy?.name || "Default"}
+                />
+              </Box>
+            </Box>
           </Box>
-        </Box>
-      </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Lines Table */}
-      <Box>
-        <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
-          Line Items
-        </Text>
-        <Box
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          borderRadius={4}
-          overflow="hidden"
-        >
+      <Layout.AppSection
+        heading="Line Items"
+        sideContent={<Text>Cards and pricing for this buylist</Text>}
+      >
+        <Layout.AppSectionCard>
           <Box
-            display="grid"
-            __gridTemplateColumns="60px 2fr 80px 120px 100px 100px 100px"
-            gap={4}
-            padding={4}
-            backgroundColor="default1"
+            borderWidth={1}
+            borderStyle="solid"
+            borderColor="default1"
+            borderRadius={4}
+            overflow="hidden"
           >
-            <Text fontWeight="bold">#</Text>
-            <Text fontWeight="bold">Card</Text>
-            <Text fontWeight="bold">Qty</Text>
-            <Text fontWeight="bold">Condition</Text>
-            <Text fontWeight="bold">Market</Text>
-            <Text fontWeight="bold">Quoted</Text>
-            <Text fontWeight="bold">Final</Text>
-          </Box>
-
-          {buylist.lines.map((line) => (
             <Box
-              key={line.id}
               display="grid"
               __gridTemplateColumns="60px 2fr 80px 120px 100px 100px 100px"
               gap={4}
               padding={4}
-              borderTopWidth={1}
-              borderTopStyle="solid"
-              borderColor="default1"
+              backgroundColor="default1"
             >
-              <Text color="default2">{line.lineNumber}</Text>
-              <Box>
-                <Text fontWeight="medium">{line.saleorVariantName || line.saleorVariantSku}</Text>
-                {line.saleorVariantSku && (
-                  <Text size={2} color="default2">{line.saleorVariantSku}</Text>
-                )}
-              </Box>
-              <Text>{line.qty}</Text>
-              <Text>{CONDITION_LABELS[line.condition] || line.condition}</Text>
-              <Text>${Number(line.marketPrice).toFixed(2)}</Text>
-              <Text>${Number(line.quotedPrice).toFixed(2)}</Text>
-              <Text fontWeight="medium">${Number(line.finalPrice).toFixed(2)}</Text>
+              <Text fontWeight="bold">#</Text>
+              <Text fontWeight="bold">Card</Text>
+              <Text fontWeight="bold">Qty</Text>
+              <Text fontWeight="bold">Condition</Text>
+              <Text fontWeight="bold">Market</Text>
+              <Text fontWeight="bold">Quoted</Text>
+              <Text fontWeight="bold">Final</Text>
             </Box>
-          ))}
 
-          <Box
-            display="grid"
-            __gridTemplateColumns="60px 2fr 80px 120px 100px 100px 100px"
-            gap={4}
-            padding={4}
-            backgroundColor="default1"
-          >
-            <Box />
-            <Text fontWeight="bold">Totals</Text>
-            <Text fontWeight="bold">
-              {buylist.lines.reduce((sum, l) => sum + l.qty, 0)}
-            </Text>
-            <Box />
-            <Text fontWeight="bold">
-              ${buylist.lines.reduce((sum, l) => sum + Number(l.marketPrice) * l.qty, 0).toFixed(2)}
-            </Text>
-            <Text fontWeight="bold">
-              ${Number(buylist.totalQuotedAmount).toFixed(2)}
-            </Text>
-            <Text fontWeight="bold">
-              ${Number(buylist.totalFinalAmount).toFixed(2)}
-            </Text>
+            {buylist.lines.map((line) => (
+              <Box
+                key={line.id}
+                display="grid"
+                __gridTemplateColumns="60px 2fr 80px 120px 100px 100px 100px"
+                gap={4}
+                padding={4}
+                borderTopWidth={1}
+                borderTopStyle="solid"
+                borderColor="default1"
+              >
+                <Text color="default2">{line.lineNumber}</Text>
+                <Box>
+                  <Text fontWeight="medium">{line.saleorVariantName || line.saleorVariantSku}</Text>
+                  {line.saleorVariantSku && (
+                    <Text size={2} color="default2">{line.saleorVariantSku}</Text>
+                  )}
+                </Box>
+                <Text>{line.qty}</Text>
+                <Text>{CONDITION_LABELS[line.condition] || line.condition}</Text>
+                <Text>${Number(line.marketPrice).toFixed(2)}</Text>
+                <Text>${Number(line.quotedPrice).toFixed(2)}</Text>
+                <Text fontWeight="medium">${Number(line.finalPrice).toFixed(2)}</Text>
+              </Box>
+            ))}
+
+            <Box
+              display="grid"
+              __gridTemplateColumns="60px 2fr 80px 120px 100px 100px 100px"
+              gap={4}
+              padding={4}
+              backgroundColor="default1"
+            >
+              <Box />
+              <Text fontWeight="bold">Totals</Text>
+              <Text fontWeight="bold">
+                {buylist.lines.reduce((sum, l) => sum + l.qty, 0)}
+              </Text>
+              <Box />
+              <Text fontWeight="bold">
+                ${buylist.lines.reduce((sum, l) => sum + Number(l.marketPrice) * l.qty, 0).toFixed(2)}
+              </Text>
+              <Text fontWeight="bold">
+                ${Number(buylist.totalQuotedAmount).toFixed(2)}
+              </Text>
+              <Text fontWeight="bold">
+                ${Number(buylist.totalFinalAmount).toFixed(2)}
+              </Text>
+            </Box>
           </Box>
-        </Box>
-      </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Cancelled/Voided Banner */}
       {buylist.status === "CANCELLED" && (
@@ -334,40 +332,42 @@ export default function BuylistDetailPage() {
 
       {/* Audit Events */}
       {buylist.events.length > 0 && (
-        <Box>
-          <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
-            Activity Log
-          </Text>
-          <Box
-            borderWidth={1}
-            borderStyle="solid"
-            borderColor="default1"
-            borderRadius={4}
-            overflow="hidden"
-          >
-            {buylist.events.map((event) => (
-              <Box
-                key={event.id}
-                display="flex"
-                justifyContent="space-between"
-                padding={4}
-                borderBottomWidth={1}
-                borderBottomStyle="solid"
-                borderColor="default1"
-              >
-                <Box display="flex" gap={2}>
-                  <Text fontWeight="medium">{event.action}</Text>
-                  {event.userId && (
-                    <Text color="default2">by {event.userId}</Text>
-                  )}
+        <Layout.AppSection
+          heading="Activity Log"
+          sideContent={<Text>Audit trail of buylist events</Text>}
+        >
+          <Layout.AppSectionCard>
+            <Box
+              borderWidth={1}
+              borderStyle="solid"
+              borderColor="default1"
+              borderRadius={4}
+              overflow="hidden"
+            >
+              {buylist.events.map((event) => (
+                <Box
+                  key={event.id}
+                  display="flex"
+                  justifyContent="space-between"
+                  padding={4}
+                  borderBottomWidth={1}
+                  borderBottomStyle="solid"
+                  borderColor="default1"
+                >
+                  <Box display="flex" gap={2}>
+                    <Text fontWeight="medium">{event.action}</Text>
+                    {event.userId && (
+                      <Text color="default2">by {event.userId}</Text>
+                    )}
+                  </Box>
+                  <Text color="default2">
+                    {new Date(event.createdAt).toLocaleString()}
+                  </Text>
                 </Box>
-                <Text color="default2">
-                  {new Date(event.createdAt).toLocaleString()}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        </Box>
+              ))}
+            </Box>
+          </Layout.AppSectionCard>
+        </Layout.AppSection>
       )}
 
       {/* Void Confirmation Modal */}

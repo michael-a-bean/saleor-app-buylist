@@ -1,3 +1,4 @@
+import { Layout } from "@saleor/apps-ui";
 import { Box, Button, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 
@@ -11,7 +12,7 @@ export default function IndexPage() {
   return (
     <Box display="flex" flexDirection="column" gap={6}>
       <Box>
-        <Text as="h1" size={8} fontWeight="bold">
+        <Text as="h1" size={10} fontWeight="bold">
           Buylist
         </Text>
         <Text as="p" color="default2">
@@ -45,100 +46,96 @@ export default function IndexPage() {
         </Box>
       )}
 
-      <Box display="flex" gap={4} flexWrap="wrap">
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          display="flex"
-          flexDirection="column"
-          gap={4}
-          __minWidth="280px"
-          className="data-table-row"
-          cursor="pointer"
-          onClick={() => router.push("/buylists")}
-        >
-          <Text as="h2" size={6} fontWeight="bold">
-            Front of House
-          </Text>
-          <Text color="default2">
-            Create buylists, grade cards, generate quotes, and record payouts.
-          </Text>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              router.push("/buylists");
-            }}
-            variant="primary"
-          >
-            View Buylists
-          </Button>
-        </Box>
+      <Layout.AppSection
+        heading="Buylist"
+        sideContent={
+          <Box display="flex" flexDirection="column" gap={2}>
+            <Text>Customer card buyback management</Text>
+          </Box>
+        }
+      >
+        <Layout.AppSectionCard>
+          <Box display="flex" gap={4} flexWrap="wrap" padding={4}>
+            <Box
+              display="flex"
+              flexDirection="column"
+              gap={4}
+              __minWidth="280px"
+              className="data-table-row"
+              cursor="pointer"
+              onClick={() => router.push("/buylists")}
+            >
+              <Text as="h2" size={6} fontWeight="bold">
+                Front of House
+              </Text>
+              <Text color="default2">
+                Create buylists, grade cards, generate quotes, and record payouts.
+              </Text>
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push("/buylists");
+                }}
+                variant="primary"
+              >
+                View Buylists
+              </Button>
+            </Box>
 
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          display="flex"
-          flexDirection="column"
-          gap={4}
-          __minWidth="280px"
-          className="data-table-row"
-          cursor="pointer"
-          onClick={() => router.push("/boh/queue")}
-        >
-          <Text as="h2" size={6} fontWeight="bold">
-            Back of House
-          </Text>
-          <Text color="default2">
-            Review pending buylists, adjust quantities, and receive into inventory.
-          </Text>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              router.push("/boh/queue");
-            }}
-            variant="secondary"
-          >
-            BOH Queue
-          </Button>
-        </Box>
+            <Box
+              display="flex"
+              flexDirection="column"
+              gap={4}
+              __minWidth="280px"
+              className="data-table-row"
+              cursor="pointer"
+              onClick={() => router.push("/boh/queue")}
+            >
+              <Text as="h2" size={6} fontWeight="bold">
+                Back of House
+              </Text>
+              <Text color="default2">
+                Review pending buylists, adjust quantities, and receive into inventory.
+              </Text>
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push("/boh/queue");
+                }}
+                variant="secondary"
+              >
+                BOH Queue
+              </Button>
+            </Box>
 
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          display="flex"
-          flexDirection="column"
-          gap={4}
-          __minWidth="280px"
-          className="data-table-row"
-          cursor="pointer"
-          onClick={() => router.push("/pricing/policies")}
-        >
-          <Text as="h2" size={6} fontWeight="bold">
-            Pricing
-          </Text>
-          <Text color="default2">
-            Configure pricing policies and view price history.
-          </Text>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              router.push("/pricing/policies");
-            }}
-            variant="tertiary"
-          >
-            Manage Policies
-          </Button>
-        </Box>
-      </Box>
+            <Box
+              display="flex"
+              flexDirection="column"
+              gap={4}
+              __minWidth="280px"
+              className="data-table-row"
+              cursor="pointer"
+              onClick={() => router.push("/pricing/policies")}
+            >
+              <Text as="h2" size={6} fontWeight="bold">
+                Pricing
+              </Text>
+              <Text color="default2">
+                Configure pricing policies and view price history.
+              </Text>
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push("/pricing/policies");
+                }}
+                variant="tertiary"
+              >
+                Manage Policies
+              </Button>
+            </Box>
+          </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
     </Box>
   );
 }

@@ -13,7 +13,6 @@ import { AppProps } from "next/app";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { AppLayout } from "@/ui/components/app-layout";
-import { ToastProvider } from "@/ui/components/Toast";
 
 /**
  * Polyfill for crypto.randomUUID() in non-secure contexts (HTTP).
@@ -72,13 +71,11 @@ function NextApp({ Component, pageProps }: AppProps) {
             <GraphQLProvider>
               <ThemeSynchronizer />
               <RoutePropagator />
-              <ToastProvider>
-                <Box padding={6}>
-                  <AppLayout>
-                    <Component {...pageProps} />
-                  </AppLayout>
-                </Box>
-              </ToastProvider>
+              <Box padding={6}>
+                <AppLayout>
+                  <Component {...pageProps} />
+                </AppLayout>
+              </Box>
             </GraphQLProvider>
           </AppBridgeProvider>
         </IframeProtectedWrapper>

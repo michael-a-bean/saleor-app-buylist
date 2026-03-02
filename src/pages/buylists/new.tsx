@@ -2,9 +2,10 @@ import { Box, Button, Input, Select, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Layout } from "@saleor/apps-ui";
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { BuylistCustomerSearch } from "@/ui/components/BuylistCustomerSearch";
-import { useToast } from "@/ui/components/Toast";
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },
@@ -68,7 +69,7 @@ interface SelectedCustomer {
 
 export default function NewBuylistPage() {
   const router = useRouter();
-  const { showSuccess, showError } = useToast();
+  const { notifySuccess, notifyError } = useDashboardNotification();
   // Customer state
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
   const [saleorUserId, setSaleorUserId] = useState<string | null>(null);
@@ -164,13 +165,14 @@ export default function NewBuylistPage() {
     onSuccess: (data) => {
       const total = lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0);
       const paymentMethodLabel = PAYOUT_METHODS.find((m) => m.value === payoutMethod)?.label ?? payoutMethod;
-      showSuccess(
+      notifySuccess(
+        "Buylist Created",
         `Buylist ${data.buylistNumber} created! Customer paid $${total.toFixed(2)} via ${paymentMethodLabel}.`
       );
       router.push(`/buylists/${data.id}?created=true`);
     },
     onError: (err) => {
-      showError(`Failed to create buylist: ${err.message}`);
+      notifyError("Error", `Failed to create buylist: ${err.message}`);
       setError(err.message);
       setIsSubmitting(false);
     },
@@ -368,14 +370,14 @@ export default function NewBuylistPage() {
     <Box display="flex" flexDirection="column" gap={6}>
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box>
-          <Text as="h1" size={8} fontWeight="bold">
+          <Text as="h1" size={10} fontWeight="bold">
             Buy Cards from Customer
           </Text>
           <Text as="p" color="default2">
             Add cards, set prices, and pay customer. Cards will queue for BOH verification.
           </Text>
         </Box>
-        <Button onClick={() => router.push("/buylists")} variant="tertiary">
+        <Button onClick={() => router.push("/buylists")} variant="secondary">
           Cancel
         </Button>
       </Box>
@@ -387,168 +389,160 @@ export default function NewBuylistPage() {
       )}
 
       {/* Customer Info */}
-      <Box
-        padding={6}
-        borderRadius={4}
-        borderWidth={1}
-        borderStyle="solid"
-        borderColor="default1"
+      <Layout.AppSection
+        heading="Customer"
+        sideContent={<Text>Search or enter customer details</Text>}
       >
-        <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
-          Customer
-        </Text>
-        <BuylistCustomerSearch
-          selectedCustomer={selectedCustomer}
-          onSelectCustomer={setSelectedCustomer}
-          onCustomerFieldsChange={(fields) => {
-            setSaleorUserId(fields.saleorUserId);
-            setCustomerName(fields.customerName);
-            setCustomerEmail(fields.customerEmail);
-            setCustomerPhone(fields.customerPhone);
-          }}
-          required={payoutMethod === "STORE_CREDIT"}
-          requiredMessage="Store credit payout requires a customer account"
-        />
-        <Box marginTop={4} display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
-          <Input
-            label="Notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-          <Select
-            label="Warehouse"
-            value={selectedWarehouseId}
-            onChange={(value) => setSelectedWarehouseId(value as string)}
-            options={
-              warehousesQuery.data?.map((w) => ({
-                value: w.id,
-                label: w.name,
-              })) ?? []
-            }
-          />
-        </Box>
-      </Box>
+        <Layout.AppSectionCard>
+          <Box padding={4}>
+            <BuylistCustomerSearch
+              selectedCustomer={selectedCustomer}
+              onSelectCustomer={setSelectedCustomer}
+              onCustomerFieldsChange={(fields) => {
+                setSaleorUserId(fields.saleorUserId);
+                setCustomerName(fields.customerName);
+                setCustomerEmail(fields.customerEmail);
+                setCustomerPhone(fields.customerPhone);
+              }}
+              required={payoutMethod === "STORE_CREDIT"}
+              requiredMessage="Store credit payout requires a customer account"
+            />
+            <Box marginTop={4} display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
+              <Input
+                label="Notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+              <Select
+                label="Warehouse"
+                value={selectedWarehouseId}
+                onChange={(value) => setSelectedWarehouseId(value as string)}
+                options={
+                  warehousesQuery.data?.map((w) => ({
+                    value: w.id,
+                    label: w.name,
+                  })) ?? []
+                }
+              />
+            </Box>
+          </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Add Items */}
-      <Box
-        padding={6}
-        borderRadius={4}
-        borderWidth={1}
-        borderStyle="solid"
-        borderColor="default1"
+      <Layout.AppSection
+        heading="Add Items"
+        sideContent={<Text>Search by card name or set number</Text>}
       >
-        <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
-          Add Items
-        </Text>
-        <Text as="p" color="default2" marginBottom={4}>
-          Search by card name or set number (e.g., &quot;Black Lotus&quot; or &quot;2ED-233&quot;)
-        </Text>
+        <Layout.AppSectionCard>
+          <Box padding={4}>
+            <Box display="grid" __gridTemplateColumns="3fr 80px 150px 80px" gap={4} alignItems="end">
+              {/* Card Search */}
+              <Box ref={searchRef} position="relative">
+                <Input
+                  label="Search Card"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={() => searchQuery.length >= 2 && setShowResults(true)}
+                  size="small"
+                />
 
-        <Box display="grid" __gridTemplateColumns="3fr 80px 150px 80px" gap={4} alignItems="end">
-          {/* Card Search */}
-          <Box ref={searchRef} position="relative">
-            <Input
-              label="Search Card"
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              onFocus={() => searchQuery.length >= 2 && setShowResults(true)}
-              size="small"
-            />
-
-            {/* Search Results Dropdown */}
-            {showResults && (
-              <Box
-                position="absolute"
-                __top="100%"
-                __left={0}
-                __right={0}
-                __zIndex={100}
-                backgroundColor="default1"
-                borderWidth={1}
-                borderStyle="solid"
-                borderColor="default1"
-                borderRadius={4}
-                __maxHeight="300px"
-                __overflowY="auto"
-                boxShadow="defaultFocused"
-              >
-                {isSearching ? (
-                  <Box padding={4}>
-                    <Text color="default2">Searching...</Text>
-                  </Box>
-                ) : searchResults.length === 0 ? (
-                  <Box padding={4}>
-                    <Text color="default2">No cards found</Text>
-                  </Box>
-                ) : (
-                  searchResults.map((card) => (
-                    <Box
-                      key={card.variantId}
-                      padding={3}
-                      cursor="pointer"
-                      borderBottomWidth={1}
-                      borderBottomStyle="solid"
-                      borderColor="default1"
-                      onClick={() => handleSelectCard(card)}
-                      style={{ transition: "background-color 0.15s" }}
-                      className="search-result-item"
-                    >
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Box>
-                          <Text fontWeight="medium">{card.displayName}</Text>
-                          {card.setName && (
-                            <Text size={2} color="default2">
-                              {card.setName}
-                            </Text>
-                          )}
-                        </Box>
-                        <Text fontWeight="bold" color="success1">
-                          ${card.marketPrice.toFixed(2)}
-                        </Text>
+                {/* Search Results Dropdown */}
+                {showResults && (
+                  <Box
+                    position="absolute"
+                    __top="100%"
+                    __left={0}
+                    __right={0}
+                    __zIndex={100}
+                    backgroundColor="default1"
+                    borderWidth={1}
+                    borderStyle="solid"
+                    borderColor="default1"
+                    borderRadius={4}
+                    __maxHeight="300px"
+                    __overflowY="auto"
+                    boxShadow="defaultFocused"
+                  >
+                    {isSearching ? (
+                      <Box padding={4}>
+                        <Text color="default2">Searching...</Text>
                       </Box>
-                    </Box>
-                  ))
+                    ) : searchResults.length === 0 ? (
+                      <Box padding={4}>
+                        <Text color="default2">No cards found</Text>
+                      </Box>
+                    ) : (
+                      searchResults.map((card) => (
+                        <Box
+                          key={card.variantId}
+                          padding={3}
+                          cursor="pointer"
+                          borderBottomWidth={1}
+                          borderBottomStyle="solid"
+                          borderColor="default1"
+                          onClick={() => handleSelectCard(card)}
+                          style={{ transition: "background-color 0.15s" }}
+                          className="search-result-item"
+                        >
+                          <Box display="flex" justifyContent="space-between" alignItems="center">
+                            <Box>
+                              <Text fontWeight="medium">{card.displayName}</Text>
+                              {card.setName && (
+                                <Text size={2} color="default2">
+                                  {card.setName}
+                                </Text>
+                              )}
+                            </Box>
+                            <Text fontWeight="bold" color="success1">
+                              ${card.marketPrice.toFixed(2)}
+                            </Text>
+                          </Box>
+                        </Box>
+                      ))
+                    )}
+                  </Box>
                 )}
+              </Box>
+
+              <Input
+                label="Qty"
+                type="number"
+                min={1}
+                value={newQty.toString()}
+                onChange={(e) => setNewQty(parseInt(e.target.value) || 1)}
+                size="small"
+              />
+
+              <Select
+                label="Condition"
+                value={newCondition}
+                onChange={(value) => setNewCondition(value as string)}
+                size="small"
+                options={CONDITIONS}
+              />
+
+              <Button
+                onClick={addLine}
+                variant="secondary"
+                size="small"
+                disabled={!selectedCard}
+              >
+                Add
+              </Button>
+            </Box>
+
+            {selectedCard && (
+              <Box marginTop={4} padding={3} backgroundColor="info1" borderRadius={4}>
+                <Text>
+                  Selected: <Text fontWeight="bold">{selectedCard.displayName}</Text> - Market Price:{" "}
+                  <Text fontWeight="bold">${selectedCard.marketPrice.toFixed(2)}</Text>
+                </Text>
               </Box>
             )}
           </Box>
-
-          <Input
-            label="Qty"
-            type="number"
-            min={1}
-            value={newQty.toString()}
-            onChange={(e) => setNewQty(parseInt(e.target.value) || 1)}
-            size="small"
-          />
-
-          <Select
-            label="Condition"
-            value={newCondition}
-            onChange={(value) => setNewCondition(value as string)}
-            size="small"
-            options={CONDITIONS}
-          />
-
-          <Button
-            onClick={addLine}
-            variant="secondary"
-            size="small"
-            disabled={!selectedCard}
-          >
-            Add
-          </Button>
-        </Box>
-
-        {selectedCard && (
-          <Box marginTop={4} padding={3} backgroundColor="info1" borderRadius={4}>
-            <Text>
-              Selected: <Text fontWeight="bold">{selectedCard.displayName}</Text> - Market Price:{" "}
-              <Text fontWeight="bold">${selectedCard.marketPrice.toFixed(2)}</Text>
-            </Text>
-          </Box>
-        )}
-      </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Lines Table */}
       {lines.length > 0 && (
@@ -636,86 +630,83 @@ export default function NewBuylistPage() {
 
       {/* Payment Section - only show when items are added */}
       {lines.length > 0 && (
-        <Box
-          padding={6}
-          borderRadius={4}
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          backgroundColor="success1"
+        <Layout.AppSection
+          heading="Payment"
+          sideContent={<Text>Select payout method and confirm</Text>}
         >
-          <Text as="h2" size={6} fontWeight="bold" marginBottom={4}>
-            Payment
-          </Text>
-          <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4} alignItems="end">
-            <Box>
-              <Text as="p" size={5} fontWeight="bold" marginBottom={2}>
-                Total to Pay Customer
-              </Text>
-              <Text as="p" size={8} fontWeight="bold" color="success1">
-                ${lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0).toFixed(2)}
-              </Text>
-            </Box>
-            <Select
-              label="Payout Method"
-              value={payoutMethod}
-              onChange={(value) => setPayoutMethod(value as string)}
-              options={PAYOUT_METHODS}
-            />
-            <Input
-              label="Reference (optional)"
-              value={payoutReference}
-              onChange={(e) => setPayoutReference(e.target.value)}
-              placeholder="Check #, transaction ID, etc."
-            />
-          </Box>
+          <Layout.AppSectionCard>
+            <Box padding={4}>
+              <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4} alignItems="end">
+                <Box>
+                  <Text as="p" size={5} fontWeight="bold" marginBottom={2}>
+                    Total to Pay Customer
+                  </Text>
+                  <Text as="p" size={8} fontWeight="bold" color="success1">
+                    ${lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0).toFixed(2)}
+                  </Text>
+                </Box>
+                <Select
+                  label="Payout Method"
+                  value={payoutMethod}
+                  onChange={(value) => setPayoutMethod(value as string)}
+                  options={PAYOUT_METHODS}
+                />
+                <Input
+                  label="Reference (optional)"
+                  value={payoutReference}
+                  onChange={(e) => setPayoutReference(e.target.value)}
+                  placeholder="Check #, transaction ID, etc."
+                />
+              </Box>
 
-          {/* Register Selection for Cash Payouts */}
-          {payoutMethod === "CASH" && (
-            <Box marginTop={4}>
-              {openRegistersQuery.isLoading ? (
-                <Text color="default2">Loading registers...</Text>
-              ) : openRegistersQuery.data && openRegistersQuery.data.length > 0 ? (
-                <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4} alignItems="end">
-                  <Select
-                    label="Pay from Register"
-                    value={selectedRegisterId}
-                    onChange={(value) => setSelectedRegisterId(value as string)}
-                    options={openRegistersQuery.data.map((reg) => ({
-                      value: reg.id,
-                      label: `${reg.registerCode} (${reg.status}) - $${reg.estimatedCash.toFixed(2)} in drawer`,
-                    }))}
-                  />
-                  {selectedRegisterId && openRegistersQuery.data.find((r) => r.id === selectedRegisterId) && (
-                    <Box>
-                      <Text size={2} color="default2">
-                        Current drawer: ${openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash.toFixed(2)}
-                      </Text>
-                      <Text size={2} color="default2">
-                        After payout: ${(
-                          (openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash ?? 0) -
-                          lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0)
-                        ).toFixed(2)}
+              {/* Register Selection for Cash Payouts */}
+              {payoutMethod === "CASH" && (
+                <Box marginTop={4}>
+                  {openRegistersQuery.isLoading ? (
+                    <Text color="default2">Loading registers...</Text>
+                  ) : openRegistersQuery.data && openRegistersQuery.data.length > 0 ? (
+                    <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4} alignItems="end">
+                      <Select
+                        label="Pay from Register"
+                        value={selectedRegisterId}
+                        onChange={(value) => setSelectedRegisterId(value as string)}
+                        options={openRegistersQuery.data.map((reg) => ({
+                          value: reg.id,
+                          label: `${reg.registerCode} (${reg.status}) - $${reg.estimatedCash.toFixed(2)} in drawer`,
+                        }))}
+                      />
+                      {selectedRegisterId && openRegistersQuery.data.find((r) => r.id === selectedRegisterId) && (
+                        <Box>
+                          <Text size={2} color="default2">
+                            Current drawer: ${openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash.toFixed(2)}
+                          </Text>
+                          <Text size={2} color="default2">
+                            After payout: ${(
+                              (openRegistersQuery.data.find((r) => r.id === selectedRegisterId)?.estimatedCash ?? 0) -
+                              lines.reduce((sum, l) => sum + l.buyPrice * l.qty, 0)
+                            ).toFixed(2)}
+                          </Text>
+                        </Box>
+                      )}
+                    </Box>
+                  ) : (
+                    <Box padding={3} backgroundColor="warning1" borderRadius={4}>
+                      <Text color="warning1">
+                        No open registers found. Cash payout will not be tracked against a register.
+                        Open a register in the POS app to track cash payouts.
                       </Text>
                     </Box>
                   )}
                 </Box>
-              ) : (
-                <Box padding={3} backgroundColor="warning1" borderRadius={4}>
-                  <Text color="warning1">
-                    No open registers found. Cash payout will not be tracked against a register.
-                    Open a register in the POS app to track cash payouts.
-                  </Text>
-                </Box>
               )}
             </Box>
-          )}
-        </Box>
+          </Layout.AppSectionCard>
+        </Layout.AppSection>
       )}
 
       {/* Actions */}
       <Box display="flex" justifyContent="flex-end" gap={4}>
-        <Button onClick={() => router.push("/buylists")} variant="tertiary">
+        <Button onClick={() => router.push("/buylists")} variant="secondary">
           Cancel
         </Button>
         <Button

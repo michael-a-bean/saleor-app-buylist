@@ -4,6 +4,7 @@
  * Lists all pricing rules for a policy with drag-drop reordering.
  */
 
+import { Breadcrumbs } from "@saleor/apps-ui";
 import { Box, Button, Skeleton, Text } from "@saleor/macaw-ui";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -136,14 +137,11 @@ export default function RulesListPage() {
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box>
-          <Box display="flex" alignItems="center" gap={2} marginBottom={1}>
-            <Link href="/pricing/policies">
-              <Text color="info1" size={2}>
-                ← Back to Policies
-              </Text>
-            </Link>
-          </Box>
-          <Text as="h1" size={8} fontWeight="bold">
+          <Breadcrumbs marginBottom={1}>
+            <Breadcrumbs.Item href="/pricing/policies">Pricing Policies</Breadcrumbs.Item>
+            <Breadcrumbs.Item>Rules{policyQuery.data ? ` — ${policyQuery.data.name}` : ""}</Breadcrumbs.Item>
+          </Breadcrumbs>
+          <Text as="h1" size={10} fontWeight="bold">
             Pricing Rules
           </Text>
           {policyQuery.data && (

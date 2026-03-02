@@ -15,7 +15,7 @@ export default function BuylistsPage() {
     <Box display="flex" flexDirection="column" gap={6}>
       <Box display="flex" justifyContent="space-between" alignItems="center">
         <Box>
-          <Text as="h1" size={8} fontWeight="bold">
+          <Text as="h1" size={10} fontWeight="bold">
             Buylists
           </Text>
           <Text as="p" color="default2">

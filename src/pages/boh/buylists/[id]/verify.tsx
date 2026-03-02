@@ -1,9 +1,10 @@
 import { Box, Button, Input, Select, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
+import { Layout } from "@saleor/apps-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
-import { useToast } from "@/ui/components/Toast";
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },
@@ -31,7 +32,7 @@ interface LineVerification {
 export default function BOHVerifyPage() {
   const router = useRouter();
   const { id } = router.query;
-  const { showSuccess, showError } = useToast();
+  const { notifySuccess, notifyError } = useDashboardNotification();
   const [error, setError] = useState<string | null>(null);
   const [internalNotes, setInternalNotes] = useState("");
   const [lineUpdates, setLineUpdates] = useState<Record<string, LineVerification>>({});
@@ -50,7 +51,8 @@ export default function BOHVerifyPage() {
     onSuccess: () => {
       const buylistNumber = buylistQuery.data?.buylistNumber ?? "Buylist";
       const totalQty = Object.values(lineUpdates).reduce((sum, l) => sum + l.qtyAccepted, 0);
-      showSuccess(
+      notifySuccess(
+        "Verified",
         `${buylistNumber} verified! ${totalQty} card${totalQty !== 1 ? "s" : ""} added to inventory.`
       );
       utils.boh.queue.invalidate();
@@ -58,14 +60,14 @@ export default function BOHVerifyPage() {
       router.push(`/boh/queue?verified=${encodeURIComponent(buylistNumber)}`);
     },
     onError: (err) => {
-      showError(`Verification failed: ${err.message}`);
+      notifyError("Error", `Verification failed: ${err.message}`);
       setError(err.message);
     },
   });
 
   const reconditionMutation = trpcClient.boh.reconditionLine.useMutation({
     onSuccess: () => {
-      showSuccess("Line reconditioned successfully");
+      notifySuccess("Reconditioned", "Line reconditioned successfully");
       setReconditioningLineId(null);
       setReconditionQty(1);
       setReconditionTarget("");
@@ -73,7 +75,7 @@ export default function BOHVerifyPage() {
       buylistQuery.refetch();
     },
     onError: (err) => {
-      showError(`Reconditioning failed: ${err.message}`);
+      notifyError("Error", `Reconditioning failed: ${err.message}`);
     },
   });
 
@@ -178,7 +180,7 @@ export default function BOHVerifyPage() {
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="flex-start">
         <Box>
-          <Text as="h1" size={8} fontWeight="bold">
+          <Text as="h1" size={10} fontWeight="bold">
             Verify: {buylist.buylistNumber}
           </Text>
           <Text color="default2">
@@ -186,7 +188,7 @@ export default function BOHVerifyPage() {
             {buylist.paidAt ? new Date(buylist.paidAt).toLocaleString() : "N/A"}
           </Text>
         </Box>
-        <Button onClick={() => router.push("/boh/queue")} variant="tertiary">
+        <Button onClick={() => router.push("/boh/queue")} variant="secondary">
           Back to Queue
         </Button>
       </Box>
@@ -244,172 +246,174 @@ export default function BOHVerifyPage() {
       </Box>
 
       {/* Lines Table */}
-      <Box>
-        <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
-          Cards to Verify ({buylist.lines.length} items)
-        </Text>
-        <Box
-          borderWidth={1}
-          borderStyle="solid"
-          borderColor="default1"
-          borderRadius={4}
-          overflow="hidden"
-        >
-          {/* Header */}
+      <Layout.AppSection
+        heading={`Cards to Verify (${buylist.lines.length} items)`}
+        sideContent={<Text>Verify each card and update condition if needed</Text>}
+      >
+        <Layout.AppSectionCard>
           <Box
-            display="grid"
-            __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
-            gap={3}
-            padding={4}
-            backgroundColor="default1"
-            alignItems="center"
+            borderWidth={1}
+            borderStyle="solid"
+            borderColor="default1"
+            borderRadius={4}
+            overflow="hidden"
           >
-            <Text fontWeight="bold">Card</Text>
-            <Text fontWeight="bold">Condition</Text>
-            <Text fontWeight="bold">Qty</Text>
-            <Text fontWeight="bold">Buy Price</Text>
-            <Text fontWeight="bold">Note</Text>
-            <Text fontWeight="bold">Actions</Text>
-          </Box>
+            {/* Header */}
+            <Box
+              display="grid"
+              __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
+              gap={3}
+              padding={4}
+              backgroundColor="default1"
+              alignItems="center"
+            >
+              <Text fontWeight="bold">Card</Text>
+              <Text fontWeight="bold">Condition</Text>
+              <Text fontWeight="bold">Qty</Text>
+              <Text fontWeight="bold">Buy Price</Text>
+              <Text fontWeight="bold">Note</Text>
+              <Text fontWeight="bold">Actions</Text>
+            </Box>
 
-          {buylist.lines.map((line) => {
-            const lineUpdate = lineUpdates[line.id];
-            const conditionChanged = lineUpdate && lineUpdate.condition !== line.condition;
-            const isReconditioning = reconditioningLineId === line.id;
+            {buylist.lines.map((line) => {
+              const lineUpdate = lineUpdates[line.id];
+              const conditionChanged = lineUpdate && lineUpdate.condition !== line.condition;
+              const isReconditioning = reconditioningLineId === line.id;
 
-            return (
-              <Box key={line.id}>
-                <Box
-                  display="grid"
-                  __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
-                  gap={3}
-                  padding={4}
-                  borderTopWidth={1}
-                  borderTopStyle="solid"
-                  borderColor="default1"
-                  alignItems="center"
-                  backgroundColor={conditionChanged ? "warning1" : "transparent"}
-                >
-                  <Box>
-                    <Text fontWeight="medium">
-                      {line.saleorVariantName || line.saleorVariantSku}
-                    </Text>
-                    {conditionChanged && (
-                      <Text size={2} color="warning1">
-                        Originally: {CONDITION_LABELS[line.condition]}
-                      </Text>
-                    )}
-                  </Box>
-                  <Select
-                    value={lineUpdate?.condition ?? line.condition}
-                    onChange={(value) => updateLine(line.id, { condition: value as string })}
-                    options={CONDITIONS}
-                    size="small"
-                  />
-                  <Input
-                    type="number"
-                    min={0}
-                    max={line.qty}
-                    value={(lineUpdate?.qtyAccepted ?? line.qty).toString()}
-                    onChange={(e) =>
-                      updateLine(line.id, {
-                        qtyAccepted: Math.min(line.qty, Math.max(0, parseInt(e.target.value) || 0)),
-                      })
-                    }
-                    size="small"
-                  />
-                  <Text>${Number(line.finalPrice).toFixed(2)}</Text>
-                  <Input
-                    value={lineUpdate?.conditionNote ?? ""}
-                    onChange={(e) => updateLine(line.id, { conditionNote: e.target.value })}
-                    placeholder="e.g., 'has crease'"
-                    size="small"
-                  />
-                  <Button
-                    variant="tertiary"
-                    size="small"
-                    onClick={() => {
-                      if (isReconditioning) {
-                        setReconditioningLineId(null);
-                      } else {
-                        setReconditioningLineId(line.id);
-                        setReconditionQty(1);
-                        setReconditionTarget("");
-                      }
-                    }}
-                    disabled={line.qty < 2 && !isReconditioning}
-                  >
-                    {isReconditioning ? "Cancel" : "Split"}
-                  </Button>
-                </Box>
-
-                {/* Inline reconditioning form */}
-                {isReconditioning && (
+              return (
+                <Box key={line.id}>
                   <Box
-                    display="flex"
+                    display="grid"
+                    __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
                     gap={3}
                     padding={4}
-                    paddingLeft={8}
-                    backgroundColor="info1"
-                    alignItems="center"
                     borderTopWidth={1}
                     borderTopStyle="solid"
                     borderColor="default1"
+                    alignItems="center"
+                    backgroundColor={conditionChanged ? "warning1" : "transparent"}
                   >
-                    <Text size={2} fontWeight="medium">Move</Text>
+                    <Box>
+                      <Text fontWeight="medium">
+                        {line.saleorVariantName || line.saleorVariantSku}
+                      </Text>
+                      {conditionChanged && (
+                        <Text size={2} color="warning1">
+                          Originally: {CONDITION_LABELS[line.condition]}
+                        </Text>
+                      )}
+                    </Box>
+                    <Select
+                      value={lineUpdate?.condition ?? line.condition}
+                      onChange={(value) => updateLine(line.id, { condition: value as string })}
+                      options={CONDITIONS}
+                      size="small"
+                    />
                     <Input
                       type="number"
-                      min={1}
+                      min={0}
                       max={line.qty}
-                      value={reconditionQty.toString()}
+                      value={(lineUpdate?.qtyAccepted ?? line.qty).toString()}
                       onChange={(e) =>
-                        setReconditionQty(
-                          Math.min(line.qty, Math.max(1, parseInt(e.target.value) || 1))
-                        )
+                        updateLine(line.id, {
+                          qtyAccepted: Math.min(line.qty, Math.max(0, parseInt(e.target.value) || 0)),
+                        })
                       }
                       size="small"
-                      style={{ width: 60 }}
                     />
-                    <Text size={2}>of {line.qty} to</Text>
-                    <Select
-                      value={reconditionTarget}
-                      onChange={(value) => setReconditionTarget(value as string)}
-                      options={CONDITIONS.filter((c) => c.value !== line.condition)}
+                    <Text>${Number(line.finalPrice).toFixed(2)}</Text>
+                    <Input
+                      value={lineUpdate?.conditionNote ?? ""}
+                      onChange={(e) => updateLine(line.id, { conditionNote: e.target.value })}
+                      placeholder="e.g., 'has crease'"
                       size="small"
-                      style={{ width: 160 }}
                     />
                     <Button
-                      variant="primary"
+                      variant="tertiary"
                       size="small"
-                      onClick={() => handleRecondition(line.id)}
-                      disabled={!reconditionTarget || reconditionMutation.isLoading}
+                      onClick={() => {
+                        if (isReconditioning) {
+                          setReconditioningLineId(null);
+                        } else {
+                          setReconditioningLineId(line.id);
+                          setReconditionQty(1);
+                          setReconditionTarget("");
+                        }
+                      }}
+                      disabled={line.qty < 2 && !isReconditioning}
                     >
-                      {reconditionMutation.isLoading ? "Moving..." : "Move"}
+                      {isReconditioning ? "Cancel" : "Split"}
                     </Button>
                   </Box>
-                )}
-              </Box>
-            );
-          })}
 
-          {/* Totals */}
-          <Box
-            display="grid"
-            __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
-            gap={3}
-            padding={4}
-            backgroundColor="default1"
-            alignItems="center"
-          >
-            <Text fontWeight="bold">Totals</Text>
-            <Box />
-            <Text fontWeight="bold">{totalQty}</Text>
-            <Text fontWeight="bold">${totalValue.toFixed(2)}</Text>
-            <Box />
-            <Box />
+                  {/* Inline reconditioning form */}
+                  {isReconditioning && (
+                    <Box
+                      display="flex"
+                      gap={3}
+                      padding={4}
+                      paddingLeft={8}
+                      backgroundColor="info1"
+                      alignItems="center"
+                      borderTopWidth={1}
+                      borderTopStyle="solid"
+                      borderColor="default1"
+                    >
+                      <Text size={2} fontWeight="medium">Move</Text>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={line.qty}
+                        value={reconditionQty.toString()}
+                        onChange={(e) =>
+                          setReconditionQty(
+                            Math.min(line.qty, Math.max(1, parseInt(e.target.value) || 1))
+                          )
+                        }
+                        size="small"
+                        style={{ width: 60 }}
+                      />
+                      <Text size={2}>of {line.qty} to</Text>
+                      <Select
+                        value={reconditionTarget}
+                        onChange={(value) => setReconditionTarget(value as string)}
+                        options={CONDITIONS.filter((c) => c.value !== line.condition)}
+                        size="small"
+                        style={{ width: 160 }}
+                      />
+                      <Button
+                        variant="primary"
+                        size="small"
+                        onClick={() => handleRecondition(line.id)}
+                        disabled={!reconditionTarget || reconditionMutation.isLoading}
+                      >
+                        {reconditionMutation.isLoading ? "Moving..." : "Move"}
+                      </Button>
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
+
+            {/* Totals */}
+            <Box
+              display="grid"
+              __gridTemplateColumns="2fr 130px 80px 90px 160px 100px"
+              gap={3}
+              padding={4}
+              backgroundColor="default1"
+              alignItems="center"
+            >
+              <Text fontWeight="bold">Totals</Text>
+              <Box />
+              <Text fontWeight="bold">{totalQty}</Text>
+              <Text fontWeight="bold">${totalValue.toFixed(2)}</Text>
+              <Box />
+              <Box />
+            </Box>
           </Box>
-        </Box>
-      </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Condition Change Warning */}
       {hasConditionChanges && (
@@ -432,17 +436,21 @@ export default function BOHVerifyPage() {
       )}
 
       {/* Internal Notes */}
-      <Box>
-        <Text fontWeight="bold" marginBottom={2}>
-          Internal Notes (optional)
-        </Text>
-        <Textarea
-          value={internalNotes}
-          onChange={(e) => setInternalNotes(e.target.value)}
-          placeholder="Add any notes about this verification (e.g., 'missing 2 cards', 'condition discrepancies')"
-          rows={3}
-        />
-      </Box>
+      <Layout.AppSection
+        heading="Internal Notes"
+        sideContent={<Text>Optional notes about this verification</Text>}
+      >
+        <Layout.AppSectionCard>
+          <Box padding={4}>
+            <Textarea
+              value={internalNotes}
+              onChange={(e) => setInternalNotes(e.target.value)}
+              placeholder="Add any notes about this verification (e.g., 'missing 2 cards', 'condition discrepancies')"
+              rows={3}
+            />
+          </Box>
+        </Layout.AppSectionCard>
+      </Layout.AppSection>
 
       {/* Actions */}
       <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -455,7 +463,7 @@ export default function BOHVerifyPage() {
           </Text>
         </Box>
         <Box display="flex" gap={4}>
-          <Button onClick={() => router.push("/boh/queue")} variant="tertiary">
+          <Button onClick={() => router.push("/boh/queue")} variant="secondary">
             Cancel
           </Button>
           <Button
