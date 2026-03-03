@@ -2,7 +2,6 @@ import { Box, Button, Input, Select, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Layout } from "@saleor/apps-ui";
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { BuylistCustomerSearch } from "@/ui/components/BuylistCustomerSearch";
 import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
@@ -389,12 +388,16 @@ export default function NewBuylistPage() {
       )}
 
       {/* Customer Info */}
-      <Layout.AppSection
-        heading="Customer"
-        sideContent={<Text>Search or enter customer details</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box padding={4}>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Customer
+        </Text>
             <BuylistCustomerSearch
               selectedCustomer={selectedCustomer}
               onSelectCustomer={setSelectedCustomer}
@@ -425,17 +428,19 @@ export default function NewBuylistPage() {
                 }
               />
             </Box>
-          </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Add Items */}
-      <Layout.AppSection
-        heading="Add Items"
-        sideContent={<Text>Search by card name or set number</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box padding={4}>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Add Items
+        </Text>
             <Box display="grid" __gridTemplateColumns="3fr 80px 150px 80px" gap={4} alignItems="end">
               {/* Card Search */}
               <Box ref={searchRef} position="relative">
@@ -540,9 +545,7 @@ export default function NewBuylistPage() {
                 </Text>
               </Box>
             )}
-          </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Lines Table */}
       {lines.length > 0 && (
@@ -630,12 +633,16 @@ export default function NewBuylistPage() {
 
       {/* Payment Section - only show when items are added */}
       {lines.length > 0 && (
-        <Layout.AppSection
-          heading="Payment"
-          sideContent={<Text>Select payout method and confirm</Text>}
+        <Box
+          padding={4}
+          borderRadius={4}
+          borderWidth={1}
+          borderStyle="solid"
+          borderColor="default1"
         >
-          <Layout.AppSectionCard>
-            <Box padding={4}>
+          <Text size={5} fontWeight="bold" marginBottom={4}>
+            Payment
+          </Text>
               <Box display="grid" __gridTemplateColumns="1fr 1fr 1fr" gap={4} alignItems="end">
                 <Box>
                   <Text as="p" size={5} fontWeight="bold" marginBottom={2}>
@@ -699,9 +706,7 @@ export default function NewBuylistPage() {
                   )}
                 </Box>
               )}
-            </Box>
-          </Layout.AppSectionCard>
-        </Layout.AppSection>
+        </Box>
       )}
 
       {/* Actions */}

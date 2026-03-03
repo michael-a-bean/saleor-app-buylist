@@ -1,5 +1,4 @@
 import { Box, Button, Input, Select, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
-import { Layout } from "@saleor/apps-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
@@ -246,11 +245,16 @@ export default function BOHVerifyPage() {
       </Box>
 
       {/* Lines Table */}
-      <Layout.AppSection
-        heading={`Cards to Verify (${buylist.lines.length} items)`}
-        sideContent={<Text>Verify each card and update condition if needed</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Cards to Verify ({buylist.lines.length} items)
+        </Text>
           <Box
             borderWidth={1}
             borderStyle="solid"
@@ -412,8 +416,7 @@ export default function BOHVerifyPage() {
               <Box />
             </Box>
           </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Condition Change Warning */}
       {hasConditionChanges && (
@@ -436,21 +439,23 @@ export default function BOHVerifyPage() {
       )}
 
       {/* Internal Notes */}
-      <Layout.AppSection
-        heading="Internal Notes"
-        sideContent={<Text>Optional notes about this verification</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box padding={4}>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Internal Notes
+        </Text>
             <Textarea
               value={internalNotes}
               onChange={(e) => setInternalNotes(e.target.value)}
               placeholder="Add any notes about this verification (e.g., 'missing 2 cards', 'condition discrepancies')"
               rows={3}
             />
-          </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Actions */}
       <Box display="flex" justifyContent="space-between" alignItems="center">

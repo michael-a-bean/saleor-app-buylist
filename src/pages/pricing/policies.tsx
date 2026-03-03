@@ -1,4 +1,3 @@
-import { Layout } from "@saleor/apps-ui";
 import { Box, Button, Input, Select, Skeleton, Text } from "@saleor/macaw-ui";
 import Link from "next/link";
 import { useRef, useState } from "react";
@@ -149,12 +148,18 @@ export default function PricingPoliciesPage() {
 
       {/* Create/Edit Form */}
       {showForm && (
-        <Layout.AppSection
-          heading={editingId ? "Edit Policy" : "New Policy"}
-          sideContent={<Text>Configure pricing policy settings</Text>}
+        <Box
+          ref={formRef}
+          padding={4}
+          borderRadius={4}
+          borderWidth={1}
+          borderStyle="solid"
+          borderColor="default1"
         >
-          <Layout.AppSectionCard>
-            <Box ref={formRef} padding={4} display="flex" flexDirection="column" gap={4}>
+          <Text size={5} fontWeight="bold" marginBottom={4}>
+            {editingId ? "Edit Policy" : "New Policy"}
+          </Text>
+            <Box display="flex" flexDirection="column" gap={4}>
               <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={4}>
                 <Input
                   label="Policy Name"
@@ -240,16 +245,20 @@ export default function PricingPoliciesPage() {
                 </Button>
               </Box>
             </Box>
-          </Layout.AppSectionCard>
-        </Layout.AppSection>
+        </Box>
       )}
 
       {/* Policies List */}
-      <Layout.AppSection
-        heading="Policies"
-        sideContent={<Text>Active pricing policies for buylists</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Policies
+        </Text>
           {policiesQuery.isLoading ? (
             <Box display="flex" flexDirection="column" gap={2}>
               {[1, 2, 3].map((i) => (
@@ -356,8 +365,7 @@ export default function PricingPoliciesPage() {
               ))}
             </Box>
           )}
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Info Box */}
       <Box

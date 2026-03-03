@@ -1,4 +1,3 @@
-import { Layout } from "@saleor/apps-ui";
 import { Box, Button, Text } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 
@@ -46,16 +45,14 @@ export default function IndexPage() {
         </Box>
       )}
 
-      <Layout.AppSection
-        heading="Buylist"
-        sideContent={
-          <Box display="flex" flexDirection="column" gap={2}>
-            <Text>Customer card buyback management</Text>
-          </Box>
-        }
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box display="flex" gap={4} flexWrap="wrap" padding={4}>
+          <Box display="flex" gap={4} flexWrap="wrap">
             <Box
               display="flex"
               flexDirection="column"
@@ -134,8 +131,7 @@ export default function IndexPage() {
               </Button>
             </Box>
           </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
     </Box>
   );
 }

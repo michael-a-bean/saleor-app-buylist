@@ -1,5 +1,4 @@
 import { Box, Button, Modal, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
-import { Layout } from "@saleor/apps-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
@@ -178,12 +177,17 @@ export default function BuylistDetailPage() {
       </Box>
 
       {/* Customer Info & Summary */}
-      <Layout.AppSection
-        heading="Details"
-        sideContent={<Text>Customer information and buylist summary</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={6} padding={4}>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Details
+        </Text>
+          <Box display="grid" __gridTemplateColumns="1fr 1fr" gap={6}>
             <Box>
               <Text as="h2" size={5} fontWeight="bold" marginBottom={4}>
                 Customer
@@ -225,15 +229,19 @@ export default function BuylistDetailPage() {
               </Box>
             </Box>
           </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Lines Table */}
-      <Layout.AppSection
-        heading="Line Items"
-        sideContent={<Text>Cards and pricing for this buylist</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
+        <Text size={5} fontWeight="bold" marginBottom={4}>
+          Line Items
+        </Text>
           <Box
             borderWidth={1}
             borderStyle="solid"
@@ -307,8 +315,7 @@ export default function BuylistDetailPage() {
               </Text>
             </Box>
           </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
 
       {/* Cancelled/Voided Banner */}
       {buylist.status === "CANCELLED" && (
@@ -332,11 +339,16 @@ export default function BuylistDetailPage() {
 
       {/* Audit Events */}
       {buylist.events.length > 0 && (
-        <Layout.AppSection
-          heading="Activity Log"
-          sideContent={<Text>Audit trail of buylist events</Text>}
+        <Box
+          padding={4}
+          borderRadius={4}
+          borderWidth={1}
+          borderStyle="solid"
+          borderColor="default1"
         >
-          <Layout.AppSectionCard>
+          <Text size={5} fontWeight="bold" marginBottom={4}>
+            Activity Log
+          </Text>
             <Box
               borderWidth={1}
               borderStyle="solid"
@@ -366,8 +378,7 @@ export default function BuylistDetailPage() {
                 </Box>
               ))}
             </Box>
-          </Layout.AppSectionCard>
-        </Layout.AppSection>
+        </Box>
       )}
 
       {/* Void Confirmation Modal */}

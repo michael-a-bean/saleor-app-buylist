@@ -2,7 +2,7 @@
  * Edit Pricing Rule Page
  */
 
-import { Breadcrumbs, Layout } from "@saleor/apps-ui";
+import { Breadcrumbs } from "@saleor/apps-ui";
 import { Box, Button, Input, Select, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -159,12 +159,14 @@ export default function EditRulePage() {
       )}
 
       {/* Form */}
-      <Layout.AppSection
-        heading="Rule Configuration"
-        sideContent={<Text>Define conditions and actions for this pricing rule</Text>}
+      <Box
+        padding={4}
+        borderRadius={4}
+        borderWidth={1}
+        borderStyle="solid"
+        borderColor="default1"
       >
-        <Layout.AppSectionCard>
-          <Box padding={4} display="flex" flexDirection="column" gap={6}>
+          <Box display="flex" flexDirection="column" gap={6}>
             {/* Basic Info */}
             <Box display="flex" flexDirection="column" gap={4}>
               <Text size={5} fontWeight="bold">
@@ -301,8 +303,7 @@ export default function EditRulePage() {
               </Button>
             </Box>
           </Box>
-        </Layout.AppSectionCard>
-      </Layout.AppSection>
+      </Box>
     </Box>
   );
 }
