@@ -248,31 +248,36 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
         line: BuylistLine;
         qtyAccepted: number;
         actualVariantId: string;
+        actualSku: string;
       }> = [
         {
           line: createMockBuylistLine({ id: "line-1", condition: "NM", finalPrice: new Decimal("8.00"), qty: 2 }),
           qtyAccepted: 2,
           actualVariantId: "variant-NM-NF",
+          actualSku: "abc123-NM-NF",
         },
         {
           line: createMockBuylistLine({ id: "line-2", condition: "LP", finalPrice: new Decimal("6.50"), qty: 1 }),
           qtyAccepted: 1,
           actualVariantId: "variant-LP-NF",
+          actualSku: "abc123-LP-NF",
         },
         {
           line: createMockBuylistLine({ id: "line-3", condition: "NM", finalPrice: new Decimal("12.00"), qty: 1 }),
           qtyAccepted: 1,
           actualVariantId: "variant-NM-NF",
+          actualSku: "abc123-NM-NF",
         },
         {
           line: createMockBuylistLine({ id: "line-4", condition: "DMG", finalPrice: new Decimal("3.00"), qty: 1 }),
           qtyAccepted: 1,
           actualVariantId: "variant-DMG-NF",
+          actualSku: "abc123-DMG-NF",
         },
       ];
 
       // Simulate cost event creation (mirrors boh-router.ts logic)
-      for (const { line, qtyAccepted, actualVariantId } of acceptedLines) {
+      for (const { line, qtyAccepted, actualVariantId, actualSku } of acceptedLines) {
         await mockPrisma.costLayerEvent.create({
           data: {
             id: `event-${line.id}`,
@@ -280,6 +285,8 @@ describe("IT2: Buylist → Costing → WAC Pipeline", () => {
             eventType: "BUYLIST_RECEIPT",
             saleorVariantId: actualVariantId,
             saleorWarehouseId: "warehouse-main",
+            saleorVariantSku: actualSku,
+            saleorVariantName: line.saleorVariantName,
             qtyDelta: qtyAccepted,
             unitCost: line.finalPrice,
             currency: line.currency,

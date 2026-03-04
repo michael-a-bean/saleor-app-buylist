@@ -1399,6 +1399,8 @@ export const buylistsRouter = router({
               eventType: "BUYLIST_RECEIPT_REVERSAL",
               saleorVariantId: actualVariantId,
               saleorWarehouseId: buylist.saleorWarehouseId,
+              saleorVariantSku: costEvent.saleorVariantSku,
+              saleorVariantName: costEvent.saleorVariantName,
               qtyDelta: -qtyAccepted,
               unitCost: line.finalPrice,
               currency: line.currency,

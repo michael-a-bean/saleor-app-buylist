@@ -155,6 +155,7 @@ export const bohRouter = router({
         line: typeof buylist.lines[0];
         qtyAccepted: number;
         actualVariantId: string; // The condition-specific variant ID for stock
+        actualSku: string; // The condition-specific SKU (derived from finalCondition)
       }> = [];
 
       // Create Saleor client for looking up condition variants
@@ -221,7 +222,14 @@ export const bohRouter = router({
           });
         }
 
-        linesToProcess.push({ line, qtyAccepted, actualVariantId });
+        // Derive the condition-specific SKU from finalCondition
+        // SKU format: {scryfall_uuid}-{condition}-{finish}
+        const skuParts = line.saleorVariantSku!.split("-");
+        const finish = skuParts[skuParts.length - 1];
+        const prefix = skuParts.slice(0, -2).join("-");
+        const actualSku = `${prefix}-${finalCondition}-${finish}`;
+
+        linesToProcess.push({ line, qtyAccepted, actualVariantId, actualSku });
 
         // Add stock adjustment (positive delta = adding to inventory)
         stockAdjustments.push({
@@ -271,7 +279,7 @@ export const bohRouter = router({
       // Create cost layer events - use finalPrice (what we paid customer) as unit cost
       // Use actualVariantId (condition-specific) for proper WAC tracking per condition
       let costEventsCreated = 0;
-      for (const { line, qtyAccepted, actualVariantId } of linesToProcess) {
+      for (const { line, qtyAccepted, actualVariantId, actualSku } of linesToProcess) {
         // Use optimized O(1) WAC calculation with the condition-specific variant
         const wacResult = await computeWacForNewEventOptimized({
           prisma: ctx.prisma,
@@ -289,6 +297,8 @@ export const bohRouter = router({
             eventType: "BUYLIST_RECEIPT",
             saleorVariantId: actualVariantId, // Use condition-specific variant
             saleorWarehouseId: buylist.saleorWarehouseId,
+            saleorVariantSku: actualSku,
+            saleorVariantName: line.saleorVariantName,
             qtyDelta: qtyAccepted,
             unitCost: line.finalPrice, // Cost basis = what we paid the customer
             currency: line.currency,
