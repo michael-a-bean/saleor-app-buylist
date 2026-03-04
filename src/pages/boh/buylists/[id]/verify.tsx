@@ -1,9 +1,9 @@
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 import { Box, Button, Input, Select, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
-import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 const CONDITIONS = [
   { value: "NM", label: "Near Mint (NM)" },

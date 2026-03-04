@@ -1,10 +1,10 @@
+import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 import { Box, Button, Modal, Skeleton, Text, Textarea } from "@saleor/macaw-ui";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 
 import { trpcClient } from "@/modules/trpc/trpc-client";
 import { StatusBadge } from "@/ui/components";
-import { useDashboardNotification } from "@saleor/apps-shared/use-dashboard-notification";
 
 const CONDITION_LABELS: Record<string, string> = {
   NM: "Near Mint",
