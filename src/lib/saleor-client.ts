@@ -3,6 +3,11 @@ import { Decimal } from "decimal.js";
 import { Client, gql } from "urql";
 
 import { createLogger } from "./logger";
+import {
+  isMeilisearchConfigured,
+  searchProducts as meilisearchSearch,
+  type MeilisearchHit,
+} from "./meilisearch-client";
 
 const logger = createLogger("saleor-client");
 
@@ -375,6 +380,78 @@ function dedupeCardResults(results: CardSearchResult[]): CardSearchResult[] {
 }
 
 /**
+ * Parse a collector number query.
+ * Supports: "NEO-123", "NEO/123", "123-NEO", "123/NEO"
+ * Returns null if the query doesn't match a collector number pattern.
+ */
+function parseCollectorNumber(
+  query: string
+): { setCode: string; collectorNumber: string } | null {
+  // Match SET/NUM or SET-NUM
+  // Set codes are 2-5 alphanumeric chars containing at least one letter (e.g., NEO, 2ED, 10E, M10, 40K)
+  // Collector numbers are digits with optional letter suffix (e.g., 123, 123a)
+  const setFirst = query.match(/^([A-Za-z0-9]{2,5})[\/\-](\d+[A-Za-z]*)$/);
+  if (setFirst && /[A-Za-z]/.test(setFirst[1])) {
+    return { setCode: setFirst[1].toUpperCase(), collectorNumber: setFirst[2] };
+  }
+
+  // Match NUM/SET or NUM-SET (reversed)
+  const numFirst = query.match(/^(\d+[A-Za-z]*)[\/\-]([A-Za-z0-9]{2,5})$/);
+  if (numFirst && /[A-Za-z]/.test(numFirst[2])) {
+    return { setCode: numFirst[2].toUpperCase(), collectorNumber: numFirst[1] };
+  }
+
+  return null;
+}
+
+/**
+ * Convert a Meilisearch hit to a CardSearchResult.
+ * Prefers NM Non-Foil variant for pricing, falls back to min_price.
+ */
+function meilisearchHitToCardResult(hit: MeilisearchHit): CardSearchResult {
+  const setNumber =
+    hit.set_code && hit.collector_number
+      ? `${hit.set_code.toUpperCase()}-${hit.collector_number}`
+      : null;
+  const displayName = setNumber ? `${hit.name} (${setNumber})` : hit.name;
+
+  // Find NM Non-Foil variant for best price reference
+  let bestVariant = hit.variants.find(
+    (v) =>
+      (v.condition === "Near Mint" || v.condition === "NM") &&
+      (v.finish === "Non-Foil" || v.finish === "Nonfoil"),
+  );
+  // Fallback: any NM variant
+  if (!bestVariant) {
+    bestVariant = hit.variants.find(
+      (v) => v.condition === "Near Mint" || v.condition === "NM",
+    );
+  }
+  // Fallback: first variant with a price
+  if (!bestVariant) {
+    bestVariant = hit.variants.find((v) => v.price !== null && v.price > 0);
+  }
+
+  const price = bestVariant?.price ?? hit.min_price ?? 0;
+
+  return {
+    variantId: bestVariant?.original_id ?? hit.original_id,
+    variantSku: bestVariant?.sku ?? null,
+    variantName: bestVariant
+      ? `${bestVariant.condition} - ${bestVariant.finish}`
+      : "",
+    productName: hit.name,
+    thumbnailUrl: hit.thumbnail,
+    setCode: hit.set_code || null,
+    setName: hit.set_name || null,
+    collectorNumber: hit.collector_number || null,
+    displayName,
+    marketPrice: price,
+    currency: "USD",
+  };
+}
+
+/**
  * Saleor API client helper functions for buylist app
  */
 export class SaleorClient {
@@ -405,36 +482,64 @@ export class SaleorClient {
   }
 
   /**
-   * Search for cards by name or set number
-   * Set number format: "SET-123" or "123-SET" (e.g., "NEO-123" or "123-NEO")
+   * Search for cards by name or collector number.
+   * Uses Meilisearch for fast, complete results with fallback to Saleor GraphQL.
+   *
+   * Supported collector number formats:
+   * - "NEO-123" or "NEO/123" (SET-NUM)
+   * - "123-NEO" or "123/NEO" (NUM-SET)
+   * - Plain text for card name search
    */
   async searchCards(query: string, first: number = 20): Promise<CardSearchResult[]> {
     logger.debug("Searching cards", { query, first });
 
-    // Check if query looks like a set number (e.g., "NEO-123" or "123-NEO")
-    const setNumberMatch = query.match(/^([A-Za-z0-9]+)-([A-Za-z0-9]+)$/);
-    let searchQuery = query;
-
-    if (setNumberMatch) {
-      // Could be "SET-123" or "123-SET", try to determine which
-      const [, part1, part2] = setNumberMatch;
-      const isFirstNumeric = /^\d+[A-Za-z]*$/.test(part1);
-
-      // If first part is numeric, format is "123-SET", else "SET-123"
-      const setCode = isFirstNumeric ? part2 : part1;
-      const collectorNum = isFirstNumeric ? part1 : part2;
-
-      /*
-       * For set number search, we'll search for the collector number
-       * and filter results by set code
-       */
-      searchQuery = collectorNum;
-      logger.debug("Detected set number format", { setCode, collectorNum });
+    // Try Meilisearch first if configured
+    if (isMeilisearchConfigured()) {
+      try {
+        return await this.searchCardsMeilisearch(query, first);
+      } catch (error) {
+        logger.warn("Meilisearch search failed, falling back to Saleor", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
+
+    // Fallback to Saleor GraphQL search
+    return this.searchCardsSaleor(query, first);
+  }
+
+  /**
+   * Search cards via Meilisearch — fast, complete, with collector number support.
+   */
+  protected async searchCardsMeilisearch(
+    query: string,
+    first: number,
+  ): Promise<CardSearchResult[]> {
+    const parsed = parseCollectorNumber(query);
+
+    const hits = await meilisearchSearch(parsed ? "" : query, {
+      limit: first,
+      setCode: parsed?.setCode,
+      collectorNumber: parsed?.collectorNumber,
+      channel: this.channel,
+    });
+
+    return hits.map(meilisearchHitToCardResult);
+  }
+
+  /**
+   * Search cards via Saleor GraphQL — slower fallback when Meilisearch is unavailable.
+   */
+  protected async searchCardsSaleor(
+    query: string,
+    first: number,
+  ): Promise<CardSearchResult[]> {
+    const parsed = parseCollectorNumber(query);
+    const searchQuery = parsed ? parsed.collectorNumber : query;
 
     const result = await this.client
       .query<SearchVariantsResponse>(SEARCH_VARIANTS_QUERY, {
-        first: first * 2, // Fetch more to allow filtering
+        first: first * 2,
         search: searchQuery,
         channel: this.channel,
       })
@@ -447,29 +552,24 @@ export class SaleorClient {
 
     let variants = result.data?.productVariants?.edges.map((e) => e.node) ?? [];
 
-    // If set number search, filter by set code
-    if (setNumberMatch) {
-      const [, part1, part2] = setNumberMatch;
-      const isFirstNumeric = /^\d+[A-Za-z]*$/.test(part1);
-      const setCode = (isFirstNumeric ? part2 : part1).toLowerCase();
-      const collectorNum = isFirstNumeric ? part1 : part2;
-
+    // If collector number search, filter by set code
+    if (parsed) {
       variants = variants.filter((v) => {
         const attrs = extractMtgAttributes(v.product.attributes);
-
         return (
-          attrs.setCode?.toLowerCase() === setCode &&
-          attrs.collectorNumber === collectorNum
+          attrs.setCode?.toUpperCase() === parsed.setCode &&
+          attrs.collectorNumber === parsed.collectorNumber
         );
       });
     }
 
     const results = variants.map(variantToCardResult);
-
-    // Dedupe to show one result per unique card (condition is selected separately)
     const dedupedResults = dedupeCardResults(results).slice(0, first);
 
-    logger.debug("Found cards", { count: dedupedResults.length, beforeDedupe: results.length });
+    logger.debug("Found cards (Saleor fallback)", {
+      count: dedupedResults.length,
+      beforeDedupe: results.length,
+    });
 
     return dedupedResults;
   }
@@ -866,20 +966,31 @@ export class EnhancedSaleorClient extends SaleorClient {
   }
 
   /**
-   * Search cards with enhanced pricing from snapshots
+   * Search cards with enhanced pricing from snapshots.
+   * Skips snapshot enrichment when Meilisearch is the source (it already has pricing).
    */
   override async searchCards(query: string, first: number = 20): Promise<CardSearchResult[]> {
-    const results = await super.searchCards(query, first);
+    // Meilisearch results already contain pricing — skip the snapshot DB query
+    if (isMeilisearchConfigured()) {
+      try {
+        return await this.searchCardsMeilisearch(query, first);
+      } catch (error) {
+        logger.warn("Meilisearch search failed in EnhancedClient, falling back to Saleor+snapshots", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Saleor fallback — enrich with price snapshots
+    const results = await this.searchCardsSaleor(query, first);
 
     if (!this.priceService || results.length === 0) {
       return results;
     }
 
-    // Fetch snapshot prices for all results
     const variantIds = results.map((r) => r.variantId);
     const snapshotPrices = await this.priceService.getLatestPrices(variantIds);
 
-    // Enhance results with snapshot prices where available
     return results.map((result) => {
       const snapshotPrice = snapshotPrices.get(result.variantId);
 
@@ -887,11 +998,10 @@ export class EnhancedSaleorClient extends SaleorClient {
         return {
           ...result,
           marketPrice: snapshotPrice.price,
-          // Keep original currency from Saleor
         };
       }
 
-      // No snapshot - create one for future use (async, don't await)
+      // No snapshot — create one for future use (async, don't await)
       if (result.marketPrice > 0) {
         this.priceService
           ?.createSnapshot({ variantId: result.variantId, price: result.marketPrice, currency: result.currency })

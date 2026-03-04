@@ -86,8 +86,7 @@ export default function NewBuylistPage() {
 
   // Card search state
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<CardSearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardSearchResult | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -108,25 +107,28 @@ export default function NewBuylistPage() {
     { enabled: payoutMethod === "CASH" }
   );
 
-  // Search cards query
+  // Debounce search input (300ms)
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setDebouncedQuery("");
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Search cards query — uses debounced query
   const searchCardsQuery = trpcClient.buylists.searchCards.useQuery(
-    { query: searchQuery, limit: 15 },
+    { query: debouncedQuery, limit: 15 },
     {
-      enabled: searchQuery.length >= 2,
+      enabled: debouncedQuery.length >= 2,
       staleTime: 30000,
     }
   );
 
-  // Update search results when query changes
-  useEffect(() => {
-    if (searchCardsQuery.data) {
-      setSearchResults(searchCardsQuery.data);
-      setIsSearching(false);
-    }
-    if (searchCardsQuery.isLoading) {
-      setIsSearching(true);
-    }
-  }, [searchCardsQuery.data, searchCardsQuery.isLoading]);
+  // Derive search state — no syncing needed
+  const isSearching = searchQuery.length >= 2 && (searchQuery !== debouncedQuery || searchCardsQuery.isLoading);
+  const searchResults = searchCardsQuery.data ?? [];
 
   // Set default warehouse when loaded
   useEffect(() => {
@@ -289,7 +291,6 @@ export default function NewBuylistPage() {
     // Reset form
     setSearchQuery("");
     setSelectedCard(null);
-    setSearchResults([]);
     setNewQty(1);
     setNewCondition("NM");
     setError(null);
@@ -446,6 +447,7 @@ export default function NewBuylistPage() {
               <Box ref={searchRef} position="relative">
                 <Input
                   label="Search Card"
+                  placeholder="Card name or SET/123, SET-123"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   onFocus={() => searchQuery.length >= 2 && setShowResults(true)}
