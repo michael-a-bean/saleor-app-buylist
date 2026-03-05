@@ -9,7 +9,7 @@ import { router } from "@/modules/trpc/trpc-server";
 
 import { AttributeCacheService } from "./attribute-cache";
 import { attributesRouter } from "./attributes-router";
-import { type ProductAttributes,ruleEngine } from "./rule-engine";
+import { type ProductAttributes, ruleEngine } from "./rule-engine";
 import { rulesRouter } from "./rules-router";
 
 // Condition multiplier schema

@@ -5,8 +5,8 @@ import { Client, gql } from "urql";
 import { createLogger } from "./logger";
 import {
   isMeilisearchConfigured,
-  searchProducts as meilisearchSearch,
   type MeilisearchHit,
+  searchProducts as meilisearchSearch,
 } from "./meilisearch-client";
 
 const logger = createLogger("saleor-client");
@@ -387,16 +387,18 @@ function dedupeCardResults(results: CardSearchResult[]): CardSearchResult[] {
 function parseCollectorNumber(
   query: string
 ): { setCode: string; collectorNumber: string } | null {
-  // Match SET/NUM or SET-NUM
-  // Set codes are 2-5 alphanumeric chars containing at least one letter (e.g., NEO, 2ED, 10E, M10, 40K)
-  // Collector numbers are digits with optional letter suffix (e.g., 123, 123a)
-  const setFirst = query.match(/^([A-Za-z0-9]{2,5})[\/\-](\d+[A-Za-z]*)$/);
+  /*
+   * Match SET/NUM or SET-NUM.
+   * Set codes are 2-5 alphanumeric chars containing at least one letter (e.g., NEO, 2ED, 10E, M10, 40K).
+   * Collector numbers are digits with optional letter suffix (e.g., 123, 123a).
+   */
+  const setFirst = query.match(/^([A-Za-z0-9]{2,5})[-/](\d+[A-Za-z]*)$/);
   if (setFirst && /[A-Za-z]/.test(setFirst[1])) {
     return { setCode: setFirst[1].toUpperCase(), collectorNumber: setFirst[2] };
   }
 
   // Match NUM/SET or NUM-SET (reversed)
-  const numFirst = query.match(/^(\d+[A-Za-z]*)[\/\-]([A-Za-z0-9]{2,5})$/);
+  const numFirst = query.match(/^(\d+[A-Za-z]*)[-/]([A-Za-z0-9]{2,5})$/);
   if (numFirst && /[A-Za-z]/.test(numFirst[2])) {
     return { setCode: numFirst[2].toUpperCase(), collectorNumber: numFirst[1] };
   }

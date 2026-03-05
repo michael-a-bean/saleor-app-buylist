@@ -1,9 +1,10 @@
+import { env } from "./env";
 import { createLogger } from "./logger";
 
 const logger = createLogger("meilisearch-client");
 
-const MEILISEARCH_URL = process.env.MEILISEARCH_URL || "";
-const MEILISEARCH_API_KEY = process.env.MEILISEARCH_API_KEY;
+const MEILISEARCH_URL = env.MEILISEARCH_URL ?? "";
+const MEILISEARCH_API_KEY = env.MEILISEARCH_API_KEY;
 
 export interface MeilisearchVariant {
   id: string;

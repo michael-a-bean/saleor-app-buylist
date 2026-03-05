@@ -63,6 +63,10 @@ export const env = createEnv({
 
     // Price sync job
     PRICE_SYNC_API_KEY: z.string().optional(),
+
+    // Meilisearch
+    MEILISEARCH_URL: z.string().url().optional(),
+    MEILISEARCH_API_KEY: z.string().optional(),
   },
   shared: {
     NODE_ENV: z.enum(["development", "production", "test"]).optional().default("development"),
@@ -118,6 +122,10 @@ export const env = createEnv({
 
     // Price sync job
     PRICE_SYNC_API_KEY: process.env.PRICE_SYNC_API_KEY,
+
+    // Meilisearch
+    MEILISEARCH_URL: process.env.MEILISEARCH_URL,
+    MEILISEARCH_API_KEY: process.env.MEILISEARCH_API_KEY,
   },
   isServer: typeof window === "undefined" || process.env.NODE_ENV === "test",
   /*
