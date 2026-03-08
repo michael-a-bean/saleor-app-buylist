@@ -21,6 +21,58 @@ function getUserId(ctx: { token?: string | null }): string | null {
   return extractUserFromToken(ctx.token);
 }
 
+type GroupInfo = { id: string; name: string; discountPercent: number };
+
+/**
+ * Look up a customer's group memberships and return the highest discount percent.
+ * Used by both `create` and `createAndPay` to apply group premium on buy prices.
+ */
+async function resolveGroupPremium(
+  prisma: { customerGroupMember: { findMany: (...args: any[]) => Promise<any[]> } },
+  saleorUserId: string | undefined | null,
+  installationId: string,
+): Promise<{ percent: number; info: GroupInfo | null }> {
+  if (!saleorUserId) return { percent: 0, info: null };
+
+  const memberships = await prisma.customerGroupMember.findMany({
+    where: {
+      saleorCustomerId: saleorUserId,
+      group: { installationId, isActive: true },
+    },
+    include: {
+      group: { select: { id: true, name: true, discountPercent: true } },
+    },
+  });
+
+  const activeGroups = memberships.filter(
+    (m: any) => m.group.discountPercent && m.group.discountPercent.toNumber() > 0,
+  );
+
+  if (activeGroups.length === 0) return { percent: 0, info: null };
+
+  const best = activeGroups.reduce((a: any, b: any) =>
+    b.group.discountPercent.toNumber() > a.group.discountPercent.toNumber() ? b : a,
+  );
+  const percent = best.group.discountPercent.toNumber();
+
+  return {
+    percent,
+    info: { id: best.group.id, name: best.group.name, discountPercent: percent },
+  };
+}
+
+function buildBuylistNotes(
+  userNotes: string | undefined | null,
+  groupInfo: GroupInfo | null,
+): string | null {
+  const parts: string[] = [];
+  if (userNotes) parts.push(userNotes);
+  if (groupInfo) {
+    parts.push(`[Group Premium: ${groupInfo.name} +${groupInfo.discountPercent}%]`);
+  }
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
 // Condition enum for validation
 const conditionEnum = z.enum(["NM", "LP", "MP", "HP", "DMG"]);
 
@@ -267,6 +319,13 @@ export const buylistsRouter = router({
       });
     }
 
+    // Resolve customer group premium
+    const { percent: groupPremiumPercent, info: groupInfo } = await resolveGroupPremium(
+      ctx.prisma,
+      input.saleorUserId,
+      ctx.installationId,
+    );
+
     // Calculate prices for each line
     const linesWithPrices = input.lines.map((line, index) => {
       // Use buyPrice override if provided, otherwise calculate from policy
@@ -287,6 +346,13 @@ export const buylistsRouter = router({
         );
         quotedPrice = calculated.quotedPrice;
         finalPrice = calculated.finalPrice;
+      }
+
+      // Apply customer group premium (customer gets MORE for their cards)
+      if (groupPremiumPercent > 0) {
+        const multiplier = 1 + groupPremiumPercent / 100;
+        quotedPrice = Math.round(quotedPrice * multiplier * 100) / 100;
+        finalPrice = Math.round(finalPrice * multiplier * 100) / 100;
       }
 
       return {
@@ -320,7 +386,7 @@ export const buylistsRouter = router({
         pricingPolicyId: pricingPolicy?.id ?? null,
         totalQuotedAmount,
         totalFinalAmount: totalQuotedAmount, // Same as quoted for new buylist
-        notes: input.notes ?? null,
+        notes: buildBuylistNotes(input.notes, groupInfo),
         lines: {
           create: linesWithPrices,
         },
@@ -340,11 +406,12 @@ export const buylistsRouter = router({
           buylistNumber,
           lineCount: input.lines.length,
           totalQuotedAmount: totalQuotedAmount.toString(),
+          ...(groupInfo && { customerGroupPremium: groupInfo }),
         },
       },
     });
 
-    return buylist;
+    return { ...buylist, groupInfo };
   }),
 
   /**
@@ -403,6 +470,13 @@ export const buylistsRouter = router({
       },
     });
 
+    // Resolve customer group premium
+    const { percent: groupPremiumPercent, info: groupInfo } = await resolveGroupPremium(
+      ctx.prisma,
+      input.saleorUserId,
+      ctx.installationId,
+    );
+
     // Calculate prices for each line
     const linesWithPrices = input.lines.map((line, index) => {
       let buyPrice: number;
@@ -417,6 +491,12 @@ export const buylistsRouter = router({
           { variantId: line.saleorVariantId }
         );
         buyPrice = calculated.finalPrice;
+      }
+
+      // Apply customer group premium (customer gets MORE for their cards)
+      if (groupPremiumPercent > 0) {
+        const multiplier = 1 + groupPremiumPercent / 100;
+        buyPrice = Math.round(buyPrice * multiplier * 100) / 100;
       }
 
       return {
@@ -460,7 +540,7 @@ export const buylistsRouter = router({
           pricingPolicyId: pricingPolicy?.id ?? null,
           totalQuotedAmount: totalAmount,
           totalFinalAmount: totalAmount,
-          notes: input.notes ?? null,
+          notes: buildBuylistNotes(input.notes, groupInfo),
           payoutMethod: input.payoutMethod,
           payoutReference: input.payoutReference ?? null,
           paidAt: now,
@@ -629,6 +709,7 @@ export const buylistsRouter = router({
             payoutMethod: input.payoutMethod,
             ...(input.payoutMethod === "STORE_CREDIT" && { customerId: input.saleorUserId }),
             ...(input.payoutMethod === "CASH" && input.posRegisterSessionId && { registerSessionId: input.posRegisterSessionId }),
+            ...(groupInfo && { customerGroupPremium: groupInfo }),
           },
         },
       });
@@ -636,7 +717,7 @@ export const buylistsRouter = router({
       return newBuylist;
     });
 
-    return buylist;
+    return { ...buylist, groupInfo };
   }),
 
   /**
