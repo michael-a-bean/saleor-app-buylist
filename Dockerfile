@@ -56,7 +56,8 @@ FROM base AS runner
 WORKDIR /app
 
 # Install curl for health checks, openssl for Prisma
-RUN apk add --no-cache curl openssl
+# Upgrade base packages to pick up security fixes (e.g., zlib CVE-2026-22184)
+RUN apk upgrade --no-cache && apk add --no-cache curl openssl
 
 ENV NODE_ENV=production
 ENV PNPM_HOME="/pnpm"
