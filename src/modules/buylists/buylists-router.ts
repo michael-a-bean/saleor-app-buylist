@@ -449,7 +449,8 @@ export const buylistsRouter = router({
         buylistId: existingPayout.buylist.id,
         buylistNumber: existingPayout.buylist.buylistNumber,
       });
-      return existingPayout.buylist;
+      // Return consistent shape with groupInfo (matches normal success path)
+      return { ...existingPayout.buylist, groupInfo: existingPayout.buylist.customerGroupPremium ?? null };
     }
 
     // Generate buylist number
