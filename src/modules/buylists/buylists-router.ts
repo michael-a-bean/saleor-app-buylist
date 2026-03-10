@@ -450,7 +450,8 @@ export const buylistsRouter = router({
         buylistNumber: existingPayout.buylist.buylistNumber,
       });
       // Return consistent shape with groupInfo (matches normal success path)
-      return { ...existingPayout.buylist, groupInfo: existingPayout.buylist.customerGroupPremium ?? null };
+      // groupInfo is not stored on the Buylist model — it's only in audit event newState JSON
+      return { ...existingPayout.buylist, groupInfo: null };
     }
 
     // Generate buylist number
