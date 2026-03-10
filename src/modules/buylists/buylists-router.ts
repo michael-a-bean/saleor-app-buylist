@@ -449,8 +449,8 @@ export const buylistsRouter = router({
         buylistId: existingPayout.buylist.id,
         buylistNumber: existingPayout.buylist.buylistNumber,
       });
-      // Return consistent shape with groupInfo (matches normal success path)
-      // groupInfo is not stored on the Buylist model — it's only in audit event newState JSON
+      /* Return consistent shape with groupInfo (matches normal success path).
+         groupInfo is not stored on the Buylist model — it's only in audit event newState JSON. */
       return { ...existingPayout.buylist, groupInfo: null };
     }
 
